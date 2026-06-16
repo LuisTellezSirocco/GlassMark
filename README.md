@@ -21,6 +21,7 @@
   <img src="https://img.shields.io/badge/tests-74%20passing-1dc880?style=flat-square" alt="74 tests passing">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7c5cf8?style=flat-square" alt="License MIT"></a>
   <a href="https://github.com/nerkza/GlassMark/stargazers"><img src="https://img.shields.io/github/stars/nerkza/GlassMark?style=flat-square&color=f5a623" alt="Stars"></a>
+  <a href="https://buymeacoffee.com/lewiscookson"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-ffdd00?style=flat-square&logo=buymeacoffee&logoColor=000000" alt="Buy me a coffee"></a>
 </p>
 
 <p align="center">
@@ -28,7 +29,8 @@
   <a href="#installation">Installation</a> ·
   <a href="#keyboard-shortcuts">Shortcuts</a> ·
   <a href="#building-from-source">Build</a> ·
-  <a href="https://github.com/nerkza/GlassMark/issues">Report a bug</a>
+  <a href="https://github.com/nerkza/GlassMark/issues">Report a bug</a> ·
+  <a href="https://buymeacoffee.com/lewiscookson">Buy me a coffee</a>
 </p>
 
 <p align="center">
@@ -172,6 +174,18 @@ Glassmark is at its **1.0** milestone. Things on the horizon (kept in scope — 
 ## Contributing
 
 Issues and pull requests are welcome. Glassmark deliberately stays narrow — a fast, beautiful Markdown preview editor — so the best contributions sharpen that core rather than broadening scope. Please run the test suite before opening a PR.
+
+---
+
+## Support the project
+
+Glassmark is free and MIT-licensed. If it's found a place in your writing, you can support its development:
+
+<p>
+  <a href="https://buymeacoffee.com/lewiscookson"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-ffdd00?style=for-the-badge&logo=buymeacoffee&logoColor=000000" alt="Buy me a coffee" height="36"></a>
+</p>
+
+Starring the repo helps too — thank you. ☕️
 
 ---
 
