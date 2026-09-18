@@ -95,4 +95,49 @@ final class DocumentStoreTests: XCTestCase {
         XCTAssertTrue(html.contains("<!doctype html>"))
         XCTAssertTrue(html.contains("<h1 id=\"heading\">Heading</h1>"))
     }
+
+    func testRevisionAdvancesOnRealChangesOnly() throws {
+        let store = DocumentStore()
+        let file = try makeFile("note.md", contents: "hello")
+        store.open(file, workspace: makeWorkspace())
+        XCTAssertEqual(store.document?.revision, 0)
+
+        store.updateText("hello world")
+        XCTAssertEqual(store.document?.revision, 1)
+
+        store.updateText("hello world")
+        XCTAssertEqual(store.document?.revision, 1)
+
+        store.updateText("hello world!")
+        XCTAssertEqual(store.document?.revision, 2)
+    }
+
+    func testReopenCreatesNewSession() throws {
+        let store = DocumentStore()
+        let file = try makeFile("note.md", contents: "x")
+        let workspace = makeWorkspace()
+        store.open(file, workspace: workspace)
+        let firstSession = try XCTUnwrap(store.document?.sessionID)
+
+        store.closeDocument(id: file.id)
+        store.open(file, workspace: workspace)
+        let secondSession = try XCTUnwrap(store.document?.sessionID)
+
+        XCTAssertNotEqual(firstSession, secondSession)
+    }
+
+    func testSavePreservesRevisionAndSession() throws {
+        let store = DocumentStore()
+        let file = try makeFile("note.md", contents: "a")
+        store.open(file, workspace: makeWorkspace())
+        store.updateText("b")
+
+        let session = try XCTUnwrap(store.document?.sessionID)
+        let revision = try XCTUnwrap(store.document?.revision)
+
+        store.save()
+
+        XCTAssertEqual(store.document?.sessionID, session)
+        XCTAssertEqual(store.document?.revision, revision)
+    }
 }

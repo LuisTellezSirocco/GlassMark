@@ -6,6 +6,7 @@ struct GlassMarkApp: App {
     @StateObject private var documentStore = DocumentStore()
     @StateObject private var preferencesStore = PreferencesStore()
     @StateObject private var commandStore = CommandStore()
+    @StateObject private var credentialStore = GeminiCredentialStore()
 
     var body: some Scene {
         WindowGroup {
@@ -14,6 +15,7 @@ struct GlassMarkApp: App {
                 .environmentObject(documentStore)
                 .environmentObject(preferencesStore)
                 .environmentObject(commandStore)
+                .environmentObject(credentialStore)
                 .frame(minWidth: 980, minHeight: 640)
                 .preferredColorScheme(preferencesStore.resolvedColorScheme)
                 .task {
@@ -32,6 +34,7 @@ struct GlassMarkApp: App {
         Settings {
             SettingsView()
                 .environmentObject(preferencesStore)
+                .environmentObject(credentialStore)
         }
     }
 }

@@ -58,8 +58,10 @@ final class DocumentStore: ObservableObject {
 
     func updateText(_ text: String) {
         guard var document else { return }
+        guard !text.isExactlyEqual(to: document.text) else { return }
 
         document.text = text
+        document.revision &+= 1
         replace(document)
         saveMessage = nil
         scheduleAutosave()

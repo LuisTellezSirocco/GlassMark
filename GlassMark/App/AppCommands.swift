@@ -6,14 +6,20 @@ struct AppCommands: Commands {
     @ObservedObject var commandStore: CommandStore
     @ObservedObject var preferencesStore: PreferencesStore
 
+    @FocusedValue(\.inlineEdit) private var inlineEditAction
+
     var body: some Commands {
-        #if DIRECT_DISTRIBUTION
-        CommandGroup(after: .appInfo) {
-            Button("Check for Updates…") {
-                NotificationCenter.default.post(name: .glassmarkCheckForUpdates, object: nil)
+        CommandGroup(after: .pasteboard) {
+            Button("Edit with Gemini…") {
+                inlineEditAction?.perform()
             }
+            .keyboardShortcut("i", modifiers: [.control, .command])
+            .disabled(
+                inlineEditAction == nil
+                    || documentStore.document == nil
+                    || preferencesStore.viewMode == .previewOnly
+            )
         }
-        #endif
 
         CommandGroup(after: .newItem) {
             Button("New Markdown File") {

@@ -1,16 +1,36 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject private var preferencesStore: PreferencesStore
+
+    @State private var selection: SettingsTab = .general
+
     var body: some View {
-        TabView {
+        TabView(selection: $selection) {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
             EditorSettingsView()
                 .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+                .tag(SettingsTab.editor)
             PreviewSettingsView()
                 .tabItem { Label("Preview", systemImage: "doc.richtext") }
+                .tag(SettingsTab.preview)
+            AISettingsView()
+                .tabItem { Label("AI", systemImage: "sparkles") }
+                .tag(SettingsTab.ai)
         }
         .frame(width: 460)
+        .onAppear(perform: applyRequestedTab)
+        .onChange(of: preferencesStore.requestedSettingsTab) {
+            applyRequestedTab()
+        }
+    }
+
+    private func applyRequestedTab() {
+        guard let requested = preferencesStore.requestedSettingsTab else { return }
+        selection = requested
+        preferencesStore.requestedSettingsTab = nil
     }
 }
 
@@ -35,13 +55,6 @@ private struct GeneralSettingsView: View {
             Text("When on, edits are written to disk automatically a moment after you stop typing. Manual save (⌘S) is always available.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            #if DIRECT_DISTRIBUTION
-            Toggle("Check for updates on launch", isOn: $preferencesStore.automaticUpdateChecks)
-            Text("Checks GitHub for a newer release when Glassmark starts. No other data is sent.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            #endif
         }
         .padding(24)
     }
@@ -88,5 +101,157 @@ private struct PreviewSettingsView: View {
             }
         }
         .padding(24)
+    }
+}
+
+private struct AISettingsView: View {
+    @EnvironmentObject private var preferencesStore: PreferencesStore
+    @EnvironmentObject private var credentialStore: GeminiCredentialStore
+
+    @State private var keyField = ""
+    @State private var testState: TestState = .idle
+
+    private enum TestState: Equatable {
+        case idle
+        case running
+        case success(String)
+        case failure(String)
+    }
+
+    var body: some View {
+        Form {
+            Toggle("Enable AI editing", isOn: $preferencesStore.aiEditingEnabled)
+            Text("Adds “Edit with Gemini…” (⌃⌘I) to the editor. Nothing is sent until you run it on a selection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Section("Model") {
+                LabeledContent("Model") {
+                    HStack(spacing: 6) {
+                        TextField("Model ID", text: $preferencesStore.aiModel)
+                            .textFieldStyle(.roundedBorder)
+                        Menu {
+                            ForEach(AIModelCatalog.presets) { preset in
+                                Button(preset.title) { preferencesStore.aiModel = preset.id }
+                            }
+                        } label: {
+                            Image(systemName: "chevron.up.chevron.down")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                    }
+                }
+                Text("Any Interactions API model ID works. Presets are verified choices; default: \(AIModelCatalog.defaultModelID).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Gemini API key") {
+                SecureField("API key", text: $keyField)
+                HStack {
+                    Button("Save key") {
+                        credentialStore.save(key: keyField)
+                        keyField = ""
+                    }
+                    .disabled(keyField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button("Remove key") {
+                        credentialStore.remove()
+                    }
+
+                    Spacer()
+                    credentialStatus
+                }
+                if let error = credentialStore.lastErrorMessage {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Text("Stored in the macOS Keychain and sent only to generativelanguage.googleapis.com. Never written to preferences, logs, or the repository.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Connection") {
+                HStack {
+                    Button("Test connection") { testConnection() }
+                        .disabled(
+                            !credentialStore.isConfigured
+                                || !preferencesStore.aiEditingEnabled
+                                || testState == .running
+                        )
+                    if testState == .running {
+                        ProgressView().controlSize(.small)
+                    }
+                    testStatus
+                }
+                Text("Sends a tiny synthetic request with the selected model and may consume a small amount of quota.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Link("Get an API key in Google AI Studio", destination: URL(string: "https://aistudio.google.com/apikey")!)
+                Link("Gemini API terms", destination: URL(string: "https://ai.google.dev/gemini-api/terms")!)
+            }
+        }
+        .padding(24)
+        .onAppear { credentialStore.refresh() }
+    }
+
+    @ViewBuilder
+    private var credentialStatus: some View {
+        switch credentialStore.state {
+        case .available(.keychain):
+            Label("Configured", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .available(.developmentEnvironment):
+            Label("Development key (environment)", systemImage: "hammer.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .denied:
+            Label("Keychain denied", systemImage: "xmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+        case .failed(let message):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+        case .missing, .unknown:
+            Label("Not configured", systemImage: "circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var testStatus: some View {
+        switch testState {
+        case .idle, .running:
+            EmptyView()
+        case .success(let message):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .failure(let message):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+    }
+
+    private func testConnection() {
+        testState = .running
+        let model = preferencesStore.aiModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            let result = await credentialStore.testConnection(model: model)
+            switch result {
+            case .success:
+                testState = .success("Connection OK")
+            case .failure(let error):
+                testState = .failure(error.userMessage)
+            }
+        }
     }
 }

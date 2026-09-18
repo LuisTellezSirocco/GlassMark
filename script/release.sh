@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Builds a notarized, stapled, zipped Glassmark.app for direct download (GitHub
-# Releases). This is the build that contains the in-app updater (the App Store
-# build does NOT — it's archived from Xcode on the Release config).
+# Releases). The App Store build is archived separately from Xcode on the
+# Release config.
 #
 # Prerequisites (one-time):
 #   1. A "Developer ID Application: Recurse LTD" certificate in your keychain

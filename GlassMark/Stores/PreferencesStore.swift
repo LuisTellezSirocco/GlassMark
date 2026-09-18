@@ -9,8 +9,12 @@ final class PreferencesStore: ObservableObject {
     @AppStorage("customPreviewCSS") var customPreviewCSS = ""
     @AppStorage("focusModeEnabled") var focusModeEnabled = false
     @AppStorage("typewriterModeEnabled") var typewriterModeEnabled = false
-    /// Direct-download build only: check GitHub for a newer release on launch.
-    @AppStorage("automaticUpdateChecks") var automaticUpdateChecks = true
+    /// Inline AI editing is opt-in. The API key lives in the keychain, never here.
+    @AppStorage("aiEditingEnabled") var aiEditingEnabled = false
+    /// Any Interactions API model ID can be typed here; presets are offered in Settings.
+    @AppStorage("aiModel") var aiModel = AIModelCatalog.defaultModelID
+    /// Transient request to focus a specific Settings tab ("Open AI Settings").
+    @Published var requestedSettingsTab: SettingsTab?
 
     var resolvedColorScheme: ColorScheme? {
         switch appearancePreference {
@@ -19,6 +23,13 @@ final class PreferencesStore: ObservableObject {
         case .dark: .dark
         }
     }
+}
+
+enum SettingsTab: Hashable {
+    case general
+    case editor
+    case preview
+    case ai
 }
 
 /// Preview stylesheet themes layered on top of the base GitHub-style CSS.

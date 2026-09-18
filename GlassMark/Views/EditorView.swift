@@ -5,6 +5,9 @@ struct EditorView: View {
     @EnvironmentObject private var documentStore: DocumentStore
     @EnvironmentObject private var commandStore: CommandStore
     @EnvironmentObject private var preferencesStore: PreferencesStore
+    @EnvironmentObject private var inlineEditStore: InlineEditStore
+
+    @State private var editorID = UUID()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,25 +17,72 @@ struct EditorView: View {
             Divider()
 
             if let document = documentStore.document {
-                MarkdownTextView(
-                    text: Binding(
-                        get: { documentStore.document?.text ?? document.text },
-                        set: { documentStore.updateText($0) }
-                    ),
-                    pendingCommand: pendingCommandBinding,
-                    scrollRequest: scrollRequestBinding,
-                    activeLocation: activeLocationBinding,
-                    scrollSync: commandStore.scrollSync,
-                    onScroll: { commandStore.publishScroll(line: $0, source: .editor) },
-                    focusMode: preferencesStore.focusModeEnabled,
-                    typewriterMode: preferencesStore.typewriterModeEnabled
-                )
+                GeometryReader { proxy in
+                    MarkdownTextView(
+                        text: Binding(
+                            get: { documentStore.document?.text ?? document.text },
+                            set: { documentStore.updateText($0) }
+                        ),
+                        pendingCommand: pendingCommandBinding,
+                        scrollRequest: scrollRequestBinding,
+                        activeLocation: activeLocationBinding,
+                        scrollSync: commandStore.scrollSync,
+                        onScroll: { commandStore.publishScroll(line: $0, source: .editor) },
+                        focusMode: preferencesStore.focusModeEnabled,
+                        typewriterMode: preferencesStore.typewriterModeEnabled,
+                        editorID: editorID,
+                        windowID: inlineEditStore.windowID,
+                        workspaceID: document.workspaceID,
+                        documentURL: document.file.url,
+                        documentSessionID: document.sessionID,
+                        documentRevision: document.revision,
+                        isInlineEditActive: inlineEditStore.isSessionActive,
+                        inlineEditActivation: activationBinding,
+                        pendingReplacement: replacementBinding,
+                        selectionRestore: selectionRestoreBinding,
+                        onInlineEditCapture: { token, result in
+                            inlineEditStore.handleCapture(token: token, result: result)
+                        },
+                        onInlineEditAnchorUpdate: { rect, size in
+                            inlineEditStore.updateAnchor(rect: rect, containerSize: size)
+                        },
+                        onInlineEditApplicationResult: { id, outcome in
+                            inlineEditStore.applicationFinished(requestID: id, outcome: outcome)
+                        }
+                    )
+                    .overlay(alignment: .topLeading) {
+                        if inlineEditStore.isPanelVisible {
+                            InlineEditPanelView(store: inlineEditStore)
+                                .offset(panelOffset(in: proxy.size))
+                        }
+                    }
+                }
             }
 
             Divider()
             EditorStatusBarView()
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .onDisappear {
+            inlineEditStore.editorDisappeared(editorID: editorID)
+        }
+    }
+
+    private func panelOffset(in container: CGSize) -> CGSize {
+        let panelWidth: CGFloat = 460
+        let panelEstimatedHeight: CGFloat = 320
+        let padding: CGFloat = 8
+
+        guard let anchor = inlineEditStore.anchorRect else {
+            return CGSize(width: padding, height: padding)
+        }
+
+        let x = min(max(padding, anchor.minX), max(padding, container.width - panelWidth - padding))
+        var y = anchor.maxY + 8
+        if y + panelEstimatedHeight > container.height {
+            y = max(padding, anchor.minY - panelEstimatedHeight - 8)
+        }
+        return CGSize(width: x, height: y)
     }
 
     private var pendingCommandBinding: Binding<EditorCommandRequest?> {
@@ -53,6 +103,27 @@ struct EditorView: View {
         Binding(
             get: { commandStore.activeOutlineCharacterIndex },
             set: { commandStore.activeOutlineCharacterIndex = $0 }
+        )
+    }
+
+    private var activationBinding: Binding<UUID?> {
+        Binding(
+            get: { inlineEditStore.activationToken },
+            set: { inlineEditStore.clearActivationToken($0) }
+        )
+    }
+
+    private var replacementBinding: Binding<ReplacementRequest?> {
+        Binding(
+            get: { inlineEditStore.pendingReplacement },
+            set: { inlineEditStore.clearPendingReplacement($0) }
+        )
+    }
+
+    private var selectionRestoreBinding: Binding<SelectionRestoreRequest?> {
+        Binding(
+            get: { inlineEditStore.selectionRestoreRequest },
+            set: { inlineEditStore.clearSelectionRestoreRequest($0) }
         )
     }
 }
@@ -160,7 +231,7 @@ private struct EditorFormattingToolbarView: View {
     }
 }
 
-private struct MarkdownTextView: NSViewRepresentable {
+struct MarkdownTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var pendingCommand: EditorCommandRequest?
     @Binding var scrollRequest: OutlineScrollRequest?
@@ -169,6 +240,20 @@ private struct MarkdownTextView: NSViewRepresentable {
     let onScroll: (Int) -> Void
     let focusMode: Bool
     let typewriterMode: Bool
+
+    let editorID: UUID
+    let windowID: UUID
+    let workspaceID: UUID
+    let documentURL: URL
+    let documentSessionID: UUID
+    let documentRevision: UInt64
+    let isInlineEditActive: Bool
+    @Binding var inlineEditActivation: UUID?
+    @Binding var pendingReplacement: ReplacementRequest?
+    @Binding var selectionRestore: SelectionRestoreRequest?
+    let onInlineEditCapture: (UUID, InlineEditCaptureResult) -> Void
+    let onInlineEditAnchorUpdate: (CGRect?, CGSize) -> Void
+    let onInlineEditApplicationResult: (UUID, InlineEditApplicationOutcome) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, activeLocation: $activeLocation)
@@ -216,6 +301,7 @@ private struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.onScroll = onScroll
         context.coordinator.focusMode = focusMode
         context.coordinator.typewriterMode = typewriterMode
+        context.coordinator.applyInlineEditConfiguration(self)
         context.coordinator.observeScrolling(of: scrollView)
         context.coordinator.applyHighlighting()
         return scrollView
@@ -227,6 +313,7 @@ private struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.activeLocation = $activeLocation
         context.coordinator.onScroll = onScroll
+        context.coordinator.applyInlineEditConfiguration(self)
 
         if context.coordinator.focusMode != focusMode || context.coordinator.typewriterMode != typewriterMode {
             context.coordinator.focusMode = focusMode
@@ -240,7 +327,7 @@ private struct MarkdownTextView: NSViewRepresentable {
             context.coordinator.applyExternalScroll(toLine: scrollSync.line)
         }
 
-        if textView.string != text {
+        if !textView.string.isExactlyEqual(to: text) {
             let selectedRanges = textView.selectedRanges
             textView.string = text
             textView.selectedRanges = selectedRanges
@@ -257,6 +344,21 @@ private struct MarkdownTextView: NSViewRepresentable {
             context.coordinator.lastHandledScrollID = scrollRequest.id
             context.coordinator.scroll(toCharacterIndex: scrollRequest.characterIndex)
         }
+
+        if let token = inlineEditActivation, context.coordinator.lastHandledActivationToken != token {
+            context.coordinator.lastHandledActivationToken = token
+            DispatchQueue.main.async { context.coordinator.captureInlineEditSelection(token: token) }
+        }
+
+        if let request = pendingReplacement, context.coordinator.lastHandledReplacementID != request.id {
+            context.coordinator.lastHandledReplacementID = request.id
+            DispatchQueue.main.async { context.coordinator.processPendingReplacement(request) }
+        }
+
+        if let request = selectionRestore, context.coordinator.lastHandledSelectionRestoreID != request.id {
+            context.coordinator.lastHandledSelectionRestoreID = request.id
+            DispatchQueue.main.async { context.coordinator.processSelectionRestore(request) }
+        }
     }
 
     @MainActor
@@ -271,6 +373,28 @@ private struct MarkdownTextView: NSViewRepresentable {
         var lastHandledSyncToken: Int?
         var focusMode = false
         var typewriterMode = false
+
+        // Inline AI edit bridge
+        var editorID = UUID()
+        var windowID = UUID()
+        var workspaceID = UUID()
+        var documentURL = URL(fileURLWithPath: "/")
+        var documentSessionID = UUID()
+        var documentRevision: UInt64 = 0
+        var isInlineEditActive = false
+        var inlineEditActivation: Binding<UUID?>?
+        var pendingReplacement: Binding<ReplacementRequest?>?
+        var selectionRestore: Binding<SelectionRestoreRequest?>?
+        var onInlineEditCapture: ((UUID, InlineEditCaptureResult) -> Void)?
+        var onInlineEditAnchorUpdate: ((CGRect?, CGSize) -> Void)?
+        var onInlineEditApplicationResult: ((UUID, InlineEditApplicationOutcome) -> Void)?
+        var lastHandledActivationToken: UUID?
+        var lastHandledReplacementID: UUID?
+        var lastHandledSelectionRestoreID: UUID?
+        let editorUndoManager = UndoManager()
+        private var lastSelectionRange: NSRange?
+        private var anchorWorkItem: DispatchWorkItem?
+        private var isApplyingInlineReplacement = false
 
         private let highlighter = MarkdownSyntaxHighlighter()
         private let baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
@@ -302,6 +426,7 @@ private struct MarkdownTextView: NSViewRepresentable {
 
         @objc private func handleBoundsChange() {
             updateActiveLocation()
+            scheduleInlineEditAnchorUpdate()
             guard !isApplyingExternalScroll else { return }
             publishScrollFraction()
         }
@@ -354,7 +479,14 @@ private struct MarkdownTextView: NSViewRepresentable {
             scheduleHighlighting()
         }
 
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            editorUndoManager
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
+            if let view = notification.object as? NSTextView {
+                lastSelectionRange = view.selectedRange()
+            }
             updateActiveLocation()
             if focusMode { applyHighlighting() }
             if typewriterMode { centerCaret() }
@@ -374,6 +506,9 @@ private struct MarkdownTextView: NSViewRepresentable {
             shouldChangeTextIn affectedCharRange: NSRange,
             replacementString: String?
         ) -> Bool {
+            if isApplyingInlineReplacement || editorUndoManager.isUndoing || editorUndoManager.isRedoing {
+                return true
+            }
             guard let replacementString else { return true }
             return handleAutoPairing(in: textView, range: affectedCharRange, replacement: replacementString)
         }
@@ -648,6 +783,219 @@ private struct MarkdownTextView: NSViewRepresentable {
             guard activeLocation.wrappedValue != characterIndex else { return }
             let binding = activeLocation
             DispatchQueue.main.async { binding.wrappedValue = characterIndex }
+        }
+
+        // MARK: - Inline AI edit bridge
+
+        func applyInlineEditConfiguration(_ configuration: MarkdownTextView) {
+            editorID = configuration.editorID
+            windowID = configuration.windowID
+            workspaceID = configuration.workspaceID
+            documentURL = configuration.documentURL
+            if documentSessionID != configuration.documentSessionID {
+                editorUndoManager.removeAllActions()
+                documentSessionID = configuration.documentSessionID
+            }
+            documentRevision = configuration.documentRevision
+            isInlineEditActive = configuration.isInlineEditActive
+            inlineEditActivation = configuration.$inlineEditActivation
+            pendingReplacement = configuration.$pendingReplacement
+            selectionRestore = configuration.$selectionRestore
+            onInlineEditCapture = configuration.onInlineEditCapture
+            onInlineEditAnchorUpdate = configuration.onInlineEditAnchorUpdate
+            onInlineEditApplicationResult = configuration.onInlineEditApplicationResult
+        }
+
+        func captureInlineEditSelection(token: UUID) {
+            guard let textView else {
+                onInlineEditCapture?(token, .failed(reason: "The editor is not available."))
+                return
+            }
+            guard !textView.hasMarkedText() else {
+                onInlineEditCapture?(token, .failed(reason: "Finish composing text first."))
+                return
+            }
+            let ranges = textView.selectedRanges
+            guard ranges.count == 1, let selectedValue = ranges.first else {
+                onInlineEditCapture?(token, .failed(reason: "Select one continuous range of text."))
+                return
+            }
+
+            let text = textView.string
+            let nsString = text as NSString
+            var range = selectedValue.rangeValue
+            guard range.location != NSNotFound,
+                  range.location >= 0,
+                  range.length >= 0,
+                  range.location + range.length <= nsString.length else {
+                onInlineEditCapture?(token, .failed(reason: "The selection is not valid."))
+                return
+            }
+
+            var scope: InlineEditScope = .selection
+            if range.length == 0 {
+                scope = .paragraph
+                range = nsString.paragraphRange(for: NSRange(location: min(range.location, nsString.length), length: 0))
+                var end = range.location + range.length
+                if end > range.location,
+                   nsString.substring(with: NSRange(location: end - 1, length: 1)) == "\n" {
+                    end -= 1
+                    if end > range.location,
+                       nsString.substring(with: NSRange(location: end - 1, length: 1)) == "\r" {
+                        end -= 1
+                    }
+                }
+                range = NSRange(location: range.location, length: max(0, end - range.location))
+            }
+
+            guard range.length > 0 else {
+                onInlineEditCapture?(token, .failed(reason: "There is nothing to edit here."))
+                return
+            }
+            guard range.length <= InlineEditLimits.maxSelectionUTF16 else {
+                onInlineEditCapture?(token, .failed(reason: "The selection is too large for AI editing."))
+                return
+            }
+            let composed = nsString.rangeOfComposedCharacterSequences(for: range)
+            guard composed.location == range.location, composed.length == range.length else {
+                onInlineEditCapture?(token, .failed(reason: "The selection splits a character."))
+                return
+            }
+
+            lastSelectionRange = range
+            let anchor = inlineEditAnchor(for: range)
+            let target = InlineEditTarget(
+                windowID: windowID,
+                editorID: editorID,
+                workspaceID: workspaceID,
+                documentURL: documentURL,
+                documentSessionID: documentSessionID,
+                revision: documentRevision,
+                range: range,
+                original: nsString.substring(with: range)
+            )
+            let capture = InlineEditCapture(
+                target: target,
+                scope: scope,
+                anchorRect: anchor?.rect,
+                containerSize: anchor?.containerSize
+            )
+            onInlineEditCapture?(token, .captured(capture))
+        }
+
+        func processPendingReplacement(_ request: ReplacementRequest) {
+            pendingReplacement?.wrappedValue = nil
+            guard let onInlineEditApplicationResult else { return }
+            onInlineEditApplicationResult(request.id, applyInlineReplacement(request))
+        }
+
+        func applyInlineReplacement(_ request: ReplacementRequest) -> InlineEditApplicationOutcome {
+            guard let textView else {
+                return .rejected(reason: "The editor is not available.")
+            }
+            let target = request.target
+            guard target.windowID == windowID, target.editorID == editorID else {
+                return .rejected(reason: "This proposal belongs to another editor.")
+            }
+            guard target.documentSessionID == documentSessionID, target.revision == documentRevision else {
+                return .rejected(reason: "The document changed while the proposal was being prepared.")
+            }
+            guard !textView.hasMarkedText() else {
+                return .rejected(reason: "Finish composing text first.")
+            }
+            let currentText = textView.string
+            guard currentText.isExactlyEqual(to: text.wrappedValue) else {
+                return .rejected(reason: "The editor content changed.")
+            }
+            let nsString = currentText as NSString
+            guard target.range.location >= 0,
+                  target.range.length >= 0,
+                  target.range.location + target.range.length <= nsString.length,
+                  nsString.substring(with: target.range).isExactlyEqual(to: target.original) else {
+                return .rejected(reason: "The text changed while the proposal was being prepared.")
+            }
+
+            isApplyingInlineReplacement = true
+            defer { isApplyingInlineReplacement = false }
+            textView.breakUndoCoalescing()
+            editorUndoManager.beginUndoGrouping()
+            let applied = textView.performValidatedReplacement(
+                in: target.range,
+                with: NSAttributedString(string: request.replacement)
+            )
+            if applied {
+                editorUndoManager.setActionName("Edit with Gemini")
+            }
+            editorUndoManager.endUndoGrouping()
+            textView.breakUndoCoalescing()
+
+            guard applied else {
+                return .rejected(reason: "The editor rejected the replacement.")
+            }
+            textView.setSelectedRange(
+                NSRange(location: target.range.location, length: (request.replacement as NSString).length)
+            )
+            textView.window?.makeFirstResponder(textView)
+            return .applied
+        }
+
+        func processSelectionRestore(_ request: SelectionRestoreRequest) {
+            selectionRestore?.wrappedValue = nil
+            guard let textView,
+                  request.editorID == editorID,
+                  request.documentSessionID == documentSessionID else { return }
+            let nsString = textView.string as NSString
+            guard request.range.location >= 0,
+                  request.range.length >= 0,
+                  request.range.location + request.range.length <= nsString.length else { return }
+            textView.setSelectedRange(request.range)
+            textView.window?.makeFirstResponder(textView)
+        }
+
+        private func scheduleInlineEditAnchorUpdate() {
+            guard isInlineEditActive else { return }
+            anchorWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, self.isInlineEditActive, let range = self.lastSelectionRange else { return }
+                if let anchor = self.inlineEditAnchor(for: range) {
+                    self.onInlineEditAnchorUpdate?(anchor.rect, anchor.containerSize)
+                }
+            }
+            anchorWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: workItem)
+        }
+
+        private func inlineEditAnchor(for range: NSRange) -> (rect: CGRect, containerSize: CGSize)? {
+            guard let textView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  let scrollView = textView.enclosingScrollView else { return nil }
+
+            let length = (textView.string as NSString).length
+            let location = min(max(0, range.location), length)
+            let characterRange = NSRange(location: location, length: min(range.length, max(0, length - location)))
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: characterRange, actualCharacterRange: nil)
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            rect.origin.x += textView.textContainerOrigin.x
+            rect.origin.y += textView.textContainerOrigin.y
+            guard rect.origin.x.isFinite, rect.origin.y.isFinite, rect.width.isFinite, rect.height.isFinite else {
+                return nil
+            }
+            guard textView.visibleRect.intersects(rect) else { return nil }
+
+            let containerSize = scrollView.bounds.size
+            let rectInScrollView = textView.convert(rect, to: scrollView)
+            let topY: CGFloat = scrollView.isFlipped
+                ? rectInScrollView.minY
+                : containerSize.height - rectInScrollView.maxY
+            let clampedX = min(max(0, rectInScrollView.minX), max(0, containerSize.width - 1))
+            let anchor = CGRect(
+                x: clampedX,
+                y: max(0, min(topY, containerSize.height)),
+                width: min(rectInScrollView.width, containerSize.width),
+                height: rectInScrollView.height
+            )
+            return (anchor, containerSize)
         }
 
         // MARK: - Highlighting

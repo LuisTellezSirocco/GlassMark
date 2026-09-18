@@ -5,6 +5,9 @@ struct ContentView: View {
     @EnvironmentObject private var documentStore: DocumentStore
     @EnvironmentObject private var preferencesStore: PreferencesStore
     @EnvironmentObject private var commandStore: CommandStore
+    @EnvironmentObject private var credentialStore: GeminiCredentialStore
+
+    @StateObject private var inlineEditStore = InlineEditStore(windowID: UUID())
 
     var body: some View {
         NavigationSplitView {
@@ -49,7 +52,30 @@ struct ContentView: View {
                 documentStore.open(file, workspace: workspace)
             }
         }
-        .glassmarkUpdater()
+        .environmentObject(inlineEditStore)
+        .focusedSceneValue(\.inlineEdit, InlineEditAction {
+            guard preferencesStore.viewMode != .previewOnly else { return }
+            inlineEditStore.activate()
+        })
+        .onAppear {
+            inlineEditStore.configure(
+                credentials: credentialStore,
+                preferences: preferencesStore,
+                documents: documentStore
+            )
+        }
+        .onChange(of: documentStore.document?.revision) {
+            inlineEditStore.documentContentChanged()
+        }
+        .onChange(of: documentStore.document?.id) {
+            inlineEditStore.documentChanged()
+        }
+        .onChange(of: preferencesStore.aiEditingEnabled) {
+            inlineEditStore.configurationChanged()
+        }
+        .onChange(of: credentialStore.state) {
+            inlineEditStore.credentialsChanged()
+        }
     }
 
     @ToolbarContentBuilder
