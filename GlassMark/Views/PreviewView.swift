@@ -17,6 +17,7 @@ struct PreviewView: View {
                 baseURL: document.file.url.deletingLastPathComponent(),
                 scopeURL: document.workspaceRootURL,
                 themeCSS: renderService.themeCSS(preferencesStore.previewTheme, customCSS: preferencesStore.customPreviewCSS),
+                pageZoom: preferencesStore.previewZoomScale,
                 scrollRequest: commandStore.outlineScrollRequest,
                 scrollSync: commandStore.scrollSync,
                 onScroll: { commandStore.publishScroll(line: $0, source: .preview) }
@@ -36,6 +37,8 @@ private struct WebPreview: NSViewRepresentable {
     let baseURL: URL
     let scopeURL: URL
     let themeCSS: String
+    /// WKWebView page zoom mirroring the document text size (1.0 = default size).
+    let pageZoom: Double
     let scrollRequest: OutlineScrollRequest?
     let scrollSync: ScrollSync?
     let onScroll: (Int) -> Void
@@ -55,6 +58,7 @@ private struct WebPreview: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
+        webView.pageZoom = CGFloat(pageZoom)
         context.coordinator.webView = webView
         context.coordinator.onScroll = onScroll
 
@@ -74,6 +78,9 @@ private struct WebPreview: NSViewRepresentable {
         AssetSchemeHandler.shared.setDocumentContext(directory: baseURL, securityScopeURL: scopeURL)
         context.coordinator.onScroll = onScroll
         context.coordinator.applyTheme(themeCSS)
+        if abs(webView.pageZoom - CGFloat(pageZoom)) > 0.0001 {
+            webView.pageZoom = CGFloat(pageZoom)
+        }
         context.coordinator.scheduleRender(markdown: markdown)
         context.coordinator.handleScroll(request: scrollRequest)
         context.coordinator.handleScrollSync(scrollSync)

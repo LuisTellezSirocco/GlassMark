@@ -30,6 +30,8 @@ struct EditorView: View {
                         onScroll: { commandStore.publishScroll(line: $0, source: .editor) },
                         focusMode: preferencesStore.focusModeEnabled,
                         typewriterMode: preferencesStore.typewriterModeEnabled,
+                        showLineNumbers: preferencesStore.showLineNumbers,
+                        fontSize: preferencesStore.textSize,
                         editorID: editorID,
                         windowID: inlineEditStore.windowID,
                         workspaceID: document.workspaceID,
@@ -240,6 +242,10 @@ struct MarkdownTextView: NSViewRepresentable {
     let onScroll: (Int) -> Void
     let focusMode: Bool
     let typewriterMode: Bool
+    /// Shows the faint logical-line-number gutter (View ▸ Line Numbers).
+    let showLineNumbers: Bool
+    /// Base editor text size, controlled by "Make Text Bigger/Smaller" (⇧⌘. / ⇧⌘,).
+    let fontSize: Double
 
     let editorID: UUID
     let windowID: UUID
@@ -259,7 +265,7 @@ struct MarkdownTextView: NSViewRepresentable {
         Coordinator(text: $text, activeLocation: $activeLocation)
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> EditorContainerView {
         let scrollView = NSScrollView()
         scrollView.borderType = .noBorder
         scrollView.hasVerticalScroller = true
@@ -297,23 +303,43 @@ struct MarkdownTextView: NSViewRepresentable {
 
         textView.string = text
         scrollView.documentView = textView
+
+        // The gutter lives beside the scroll view — never as an NSRulerView,
+        // whose clip-view compensation stops the text view from drawing on
+        // macOS 26. It stays attached for the editor's lifetime; the preference
+        // only toggles its visibility so switching is instant.
+        let gutter = LineNumberGutterView(textView: textView)
+        gutter.textSize = CGFloat(fontSize)
+        let container = EditorContainerView(scrollView: scrollView, gutter: gutter)
+        context.coordinator.gutterView = gutter
+        context.coordinator.containerView = container
+        context.coordinator.setLineNumbersVisible(showLineNumbers, in: container)
+        context.coordinator.refreshGutter()
+
         context.coordinator.textView = textView
         context.coordinator.onScroll = onScroll
         context.coordinator.focusMode = focusMode
         context.coordinator.typewriterMode = typewriterMode
+        context.coordinator.setFontSize(CGFloat(fontSize))
         context.coordinator.applyInlineEditConfiguration(self)
         context.coordinator.observeScrolling(of: scrollView)
         context.coordinator.applyHighlighting()
-        return scrollView
+        return container
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ container: EditorContainerView, context: Context) {
+        let scrollView = container.scrollView
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
         context.coordinator.text = $text
         context.coordinator.activeLocation = $activeLocation
         context.coordinator.onScroll = onScroll
         context.coordinator.applyInlineEditConfiguration(self)
+        context.coordinator.setLineNumbersVisible(showLineNumbers, in: container)
+
+        if context.coordinator.setFontSize(CGFloat(fontSize)) {
+            context.coordinator.applyHighlighting()
+        }
 
         if context.coordinator.focusMode != focusMode || context.coordinator.typewriterMode != typewriterMode {
             context.coordinator.focusMode = focusMode
@@ -373,6 +399,9 @@ struct MarkdownTextView: NSViewRepresentable {
         var lastHandledSyncToken: Int?
         var focusMode = false
         var typewriterMode = false
+        var gutterView: LineNumberGutterView?
+        weak var containerView: EditorContainerView?
+        private var lineNumbersVisible = false
 
         // Inline AI edit bridge
         var editorID = UUID()
@@ -397,7 +426,10 @@ struct MarkdownTextView: NSViewRepresentable {
         private var isApplyingInlineReplacement = false
 
         private let highlighter = MarkdownSyntaxHighlighter()
-        private let baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        private var fontSize = CGFloat(DocumentTextSize.defaultSize)
+        private var baseFont: NSFont {
+            NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        }
         private var isObservingScrolling = false
         private var isApplyingExternalScroll = false
         private var highlightWorkItem: DispatchWorkItem?
@@ -427,6 +459,7 @@ struct MarkdownTextView: NSViewRepresentable {
         @objc private func handleBoundsChange() {
             updateActiveLocation()
             scheduleInlineEditAnchorUpdate()
+            gutterView?.needsDisplay = true
             guard !isApplyingExternalScroll else { return }
             publishScrollFraction()
         }
@@ -436,6 +469,20 @@ struct MarkdownTextView: NSViewRepresentable {
             guard line != lastPublishedLine else { return }
             lastPublishedLine = line
             onScroll?(line)
+        }
+
+        /// Shows or hides the line-number gutter; the layout hands its strip of
+        /// width to the editor when hidden.
+        func setLineNumbersVisible(_ visible: Bool, in container: EditorContainerView) {
+            guard lineNumbersVisible != visible else { return }
+            lineNumbersVisible = visible
+            container.setGutterVisible(visible)
+        }
+
+        /// Recomputes the gutter's line cache, font and width.
+        func refreshGutter() {
+            gutterView?.refresh()
+            containerView?.gutterWidthChanged()
         }
 
         /// Source line (0-based) nearest the top of the editor viewport.
@@ -492,8 +539,19 @@ struct MarkdownTextView: NSViewRepresentable {
             if typewriterMode { centerCaret() }
         }
 
+        /// Highlighting runs synchronously for everyday documents so characters are
+        /// drawn with their final attributes in the same cycle they are typed in
+        /// (no small-then-growing font flash). Only very large documents keep the
+        /// debounced path to protect typing responsiveness.
+        private static let synchronousHighlightLimit = 100_000
+
         private func scheduleHighlighting() {
             highlightWorkItem?.cancel()
+            let length = textView?.textStorage?.length ?? 0
+            if length <= Self.synchronousHighlightLimit {
+                applyHighlighting()
+                return
+            }
             let workItem = DispatchWorkItem { [weak self] in self?.applyHighlighting() }
             highlightWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
@@ -998,6 +1056,17 @@ struct MarkdownTextView: NSViewRepresentable {
             return (anchor, containerSize)
         }
 
+        /// Records the user's text size. Returns true when it changed, so callers
+        /// can re-run highlighting with the new font metrics.
+        @discardableResult
+        func setFontSize(_ newSize: CGFloat) -> Bool {
+            guard abs(fontSize - newSize) > 0.001 else { return false }
+            fontSize = newSize
+            gutterView?.textSize = newSize
+            containerView?.gutterWidthChanged()
+            return true
+        }
+
         // MARK: - Highlighting
 
         func applyHighlighting() {
@@ -1021,6 +1090,30 @@ struct MarkdownTextView: NSViewRepresentable {
             }
 
             textStorage.endEditing()
+            syncTypingAttributes()
+            // The text (or its metrics) may have shifted the logical lines.
+            refreshGutter()
+        }
+
+        /// Keeps the insertion font in sync with the highlighted text so newly typed
+        /// characters are drawn at their final size right away instead of being
+        /// restyled a moment later (which read as a small-then-growing font flash).
+        private func syncTypingAttributes() {
+            guard let textView else { return }
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: baseFont,
+                .foregroundColor: NSColor.textColor
+            ]
+            if let storage = textView.textStorage, storage.length > 0 {
+                let caret = min(max(0, textView.selectedRange().location), storage.length)
+                let index = min(caret > 0 ? caret - 1 : 0, storage.length - 1)
+                let source = storage.attributes(at: index, effectiveRange: nil)
+                if let font = source[.font] as? NSFont { attributes[.font] = font }
+                if let color = source[.foregroundColor] as? NSColor { attributes[.foregroundColor] = color }
+            } else {
+                textView.font = baseFont
+            }
+            textView.typingAttributes = attributes
         }
 
         /// Dims everything except the paragraph containing the caret.
@@ -1059,10 +1152,10 @@ struct MarkdownTextView: NSViewRepresentable {
         private func apply(_ token: MarkdownToken, to storage: NSTextStorage) {
             switch token.style {
             case .heading(let level):
-                let size = NSFont.systemFontSize + CGFloat(max(0, 5 - level)) * 1.5
+                let size = fontSize + CGFloat(max(0, 5 - level)) * 1.5
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: size, weight: .bold), range: token.range)
             case .strong:
-                storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold), range: token.range)
+                storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold), range: token.range)
             case .emphasis:
                 storage.addAttribute(.obliqueness, value: 0.18, range: token.range)
             case .strikethrough:

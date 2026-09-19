@@ -41,6 +41,28 @@ final class FilePersistenceServiceTests: XCTestCase {
         XCTAssertTrue(isDirectory.boolValue)
     }
 
+    func testCreateFolderInDirectoryUsesUniqueNames() throws {
+        let first = try service.createFolder(in: root)
+        XCTAssertEqual(first.lastPathComponent, "New Folder")
+        let second = try service.createFolder(in: root)
+        XCTAssertEqual(second.lastPathComponent, "New Folder 2")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    func testCreateFolderNextToFolderNestsInsideIt() throws {
+        let parentURL = root.appendingPathComponent("parent")
+        try FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let nested = try service.createFolder(nextTo: file(parentURL, kind: .folder))
+        XCTAssertEqual(
+            nested.deletingLastPathComponent().standardizedFileURL.path,
+            parentURL.standardizedFileURL.path
+        )
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: nested.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+    }
+
     func testRename() throws {
         let url = root.appendingPathComponent("old.md")
         try service.writeText("x", to: url)

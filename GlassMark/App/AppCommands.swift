@@ -21,7 +21,10 @@ struct AppCommands: Commands {
             )
         }
 
-        CommandGroup(after: .newItem) {
+        // Replaces the standard New Item group so ⌘N creates a Markdown file
+        // and ⇧⌘N creates a folder (Finder's shortcut) instead of the
+        // system-provided "New Window" claiming ⌘N.
+        CommandGroup(replacing: .newItem) {
             Button("New Markdown File") {
                 guard let file = workspaceStore.createMarkdownFile(),
                       let workspace = workspaceStore.activeWorkspace else { return }
@@ -29,6 +32,13 @@ struct AppCommands: Commands {
                 documentStore.open(file, workspace: workspace)
             }
             .keyboardShortcut("n", modifiers: [.command])
+            .disabled(workspaceStore.activeWorkspace == nil)
+
+            Button("New Folder") {
+                guard let folder = workspaceStore.createFolder() else { return }
+                workspaceStore.beginRename(folder)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(workspaceStore.activeWorkspace == nil)
 
             Button("Open Workspace…") {
@@ -82,6 +92,7 @@ struct AppCommands: Commands {
             Toggle("Focus Mode", isOn: $preferencesStore.focusModeEnabled)
                 .keyboardShortcut("f", modifiers: [.command, .control])
             Toggle("Typewriter Scrolling", isOn: $preferencesStore.typewriterModeEnabled)
+            Toggle("Line Numbers", isOn: $preferencesStore.showLineNumbers)
         }
 
         CommandGroup(after: .sidebar) {
@@ -120,6 +131,17 @@ struct AppCommands: Commands {
                 Button("Numbered List") { commandStore.run(.numberList) }
             }
             .disabled(documentStore.document == nil)
+
+            Divider()
+
+            // Notes-style text size. The shortcuts mirror Notes: ⇧⌘. bigger, ⇧⌘, smaller.
+            Button("Make Text Bigger") { preferencesStore.increaseTextSize() }
+                .keyboardShortcut(".", modifiers: [.command, .shift])
+                .disabled(!preferencesStore.canIncreaseTextSize)
+
+            Button("Make Text Smaller") { preferencesStore.decreaseTextSize() }
+                .keyboardShortcut(",", modifiers: [.command, .shift])
+                .disabled(!preferencesStore.canDecreaseTextSize)
         }
     }
 

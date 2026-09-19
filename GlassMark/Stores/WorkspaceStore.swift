@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import os
+
+private let workspaceLog = Logger(subsystem: "com.recurse.glassmark", category: "WorkspaceStore")
 
 @MainActor
 final class WorkspaceStore: ObservableObject {
@@ -7,6 +10,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var activeWorkspace: Workspace?
     @Published private(set) var fileTree: [WorkspaceFile] = []
     @Published private(set) var errorMessage: String?
+    @Published var pendingRenameFile: WorkspaceFile?
+    @Published var pendingRenameText = ""
 
     private let fileTreeService = FileTreeService()
     private let filePersistenceService = FilePersistenceService()
@@ -76,6 +81,7 @@ final class WorkspaceStore: ObservableObject {
                 colorName: workspace.colorName
             )
 
+            cancelRename()
             remember(resolvedWorkspace)
             activeWorkspace = resolvedWorkspace
             refreshFileTree()
@@ -163,17 +169,53 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func createFolder(nextTo file: WorkspaceFile) {
-        guard let activeWorkspace else { return }
+    func createFolder() -> WorkspaceFile? {
+        guard let activeWorkspace else { return nil }
 
         do {
-            try URLSecurityScope.withAccess(to: activeWorkspace.rootURL) {
-                _ = try filePersistenceService.createFolder(nextTo: file)
+            let folderURL = try URLSecurityScope.withAccess(to: activeWorkspace.rootURL) {
+                try filePersistenceService.createFolder(in: activeWorkspace.rootURL)
             }
             refreshFileTree()
+            return WorkspaceFile(url: folderURL, rootURL: activeWorkspace.rootURL, kind: .folder)
         } catch {
             errorMessage = "Could not create folder: \(error.localizedDescription)"
+            return nil
         }
+    }
+
+    func createFolder(nextTo file: WorkspaceFile) -> WorkspaceFile? {
+        guard let activeWorkspace else { return nil }
+
+        do {
+            let folderURL = try URLSecurityScope.withAccess(to: activeWorkspace.rootURL) {
+                try filePersistenceService.createFolder(nextTo: file)
+            }
+            refreshFileTree()
+            return WorkspaceFile(url: folderURL, rootURL: activeWorkspace.rootURL, kind: .folder)
+        } catch {
+            errorMessage = "Could not create folder: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    /// Starts an inline rename for `file`. Views observe `pendingRenameFile`
+    /// to present the rename prompt from any entry point (toolbar, menu,
+    /// context menu, empty state).
+    func beginRename(_ file: WorkspaceFile) {
+        pendingRenameFile = file
+        pendingRenameText = file.name
+    }
+
+    func cancelRename() {
+        pendingRenameFile = nil
+        pendingRenameText = ""
+    }
+
+    func commitRename() {
+        guard let file = pendingRenameFile else { return }
+        rename(file, to: pendingRenameText)
+        cancelRename()
     }
 
     func rename(_ file: WorkspaceFile, to proposedName: String) {
@@ -196,9 +238,11 @@ final class WorkspaceStore: ObservableObject {
             let newURL = try URLSecurityScope.withAccess(to: activeWorkspace.rootURL) {
                 try filePersistenceService.move(file, to: target)
             }
+            workspaceLog.debug("Moved \(file.relativePath, privacy: .public) to \(newURL.path(percentEncoded: false), privacy: .public)")
             refreshFileTree()
             return newURL
         } catch {
+            workspaceLog.error("Move failed: \(error.localizedDescription, privacy: .public)")
             errorMessage = "Could not move \(file.name): \(error.localizedDescription)"
             return nil
         }

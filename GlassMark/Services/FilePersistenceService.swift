@@ -20,11 +20,15 @@ struct FilePersistenceService {
         return try createMarkdownFile(in: directory)
     }
 
-    func createFolder(nextTo file: WorkspaceFile) throws -> URL {
-        let directory = file.isDirectory ? file.url : file.url.deletingLastPathComponent()
+    func createFolder(in directory: URL) throws -> URL {
         let folderURL = uniqueFolderURL(in: directory, baseName: "New Folder")
         try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: false)
         return folderURL
+    }
+
+    func createFolder(nextTo file: WorkspaceFile) throws -> URL {
+        let directory = file.isDirectory ? file.url : file.url.deletingLastPathComponent()
+        return try createFolder(in: directory)
     }
 
     func rename(_ file: WorkspaceFile, to proposedName: String) throws -> URL {

@@ -91,6 +91,15 @@ struct ContentView: View {
             .disabled(workspaceStore.activeWorkspace == nil)
 
             Button {
+                guard let folder = workspaceStore.createFolder() else { return }
+                workspaceStore.beginRename(folder)
+            } label: {
+                Label("New Folder", systemImage: "folder.badge.plus")
+            }
+            .help("New Folder (⇧⌘N)")
+            .disabled(workspaceStore.activeWorkspace == nil)
+
+            Button {
                 workspaceStore.refreshFileTree()
             } label: {
                 Label("Refresh Workspace", systemImage: "arrow.clockwise")

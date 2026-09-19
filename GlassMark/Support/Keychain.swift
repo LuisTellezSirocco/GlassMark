@@ -7,6 +7,21 @@ enum SecretStoreError: Error, Equatable {
     case unexpected(OSStatus)
 }
 
+extension SecretStoreError {
+    /// True when the Data Protection keychain is unusable in this build and the
+    /// legacy keychain should be tried instead.
+    var isEntitlementIssue: Bool {
+        switch self {
+        case .missingEntitlement:
+            return true
+        case .unexpected(let status):
+            return status == errSecParam
+        case .accessDenied:
+            return false
+        }
+    }
+}
+
 /// Storage abstraction so credential logic can be tested without touching the
 /// real keychain.
 protocol SecretStoring: Sendable {

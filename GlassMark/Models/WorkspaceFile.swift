@@ -23,6 +23,13 @@ struct WorkspaceFile: Identifiable, Equatable, Hashable, Sendable {
         kind == .markdown || kind == .text
     }
 
+    /// Whether `source` can be dropped onto this item. An item cannot be moved
+    /// onto itself, and a folder cannot be moved inside one of its own
+    /// descendants (which would detach the subtree from the workspace).
+    func canAcceptMove(of source: WorkspaceFile) -> Bool {
+        source.url != url && !url.path.hasPrefix(source.url.path + "/")
+    }
+
     init(url: URL, rootURL: URL, kind: Kind, children: [WorkspaceFile]? = nil) {
         self.id = url
         self.url = url

@@ -74,6 +74,11 @@ private struct EditorSettingsView: View {
             Text("Keeps the line you're editing vertically centered.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Toggle("Line numbers", isOn: $preferencesStore.showLineNumbers)
+            Text("Shows each line's number in a faint monospaced gutter beside the text. Wrapped lines keep a single number.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(24)
     }

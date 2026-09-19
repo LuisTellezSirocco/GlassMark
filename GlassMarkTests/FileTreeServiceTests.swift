@@ -64,12 +64,24 @@ final class FileTreeServiceTests: XCTestCase {
         XCTAssertEqual(nested.children?.map(\.name), ["child.md"])
     }
 
-    func testEmptyFoldersAreOmitted() throws {
+    func testEmptyFoldersAreShown() throws {
         let empty = root.appendingPathComponent("empty")
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
         try write("keep.md")
 
-        let names = try service.loadTree(rootURL: root).map(\.name)
-        XCTAssertEqual(names, ["keep.md"])
+        let tree = try service.loadTree(rootURL: root)
+        XCTAssertEqual(tree.map(\.name), ["empty", "keep.md"])
+        XCTAssertEqual(tree.first?.children?.count, 0)
+    }
+
+    func testNestedEmptyFolderKeepsParentVisible() throws {
+        let parent = root.appendingPathComponent("parent")
+        let child = parent.appendingPathComponent("child")
+        try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+
+        let tree = try service.loadTree(rootURL: root)
+        let parentNode = try XCTUnwrap(tree.first { $0.name == "parent" })
+        XCTAssertEqual(parentNode.children?.map(\.name), ["child"])
+        XCTAssertEqual(parentNode.children?.first?.children?.count, 0)
     }
 }

@@ -1,3 +1,4 @@
+import Security
 import XCTest
 @testable import GlassMark
 
@@ -111,5 +112,90 @@ final class GeminiCredentialStoreTests: XCTestCase {
             return XCTFail("expected failure, got \(result)")
         }
         XCTAssertEqual(error, .authentication)
+    }
+
+    // MARK: - Legacy keychain fallback (ad-hoc development builds)
+
+    private func makeDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "GlassMarkTests-\(UUID().uuidString)")!
+    }
+
+    func testWriteFallsBackToLegacyKeychainWhenDataProtectionIsUnavailable() throws {
+        let defaults = makeDefaults()
+        let primary = InMemorySecretStore()
+        primary.failWritesWith = .missingEntitlement
+        let legacy = InMemorySecretStore()
+
+        let store = GeminiCredentialStore(
+            secretStore: primary,
+            environment: [:],
+            generator: FakeGeminiGenerator(),
+            defaults: defaults,
+            legacyStoreFactory: { legacy }
+        )
+
+        store.save(key: "fallback-key")
+
+        XCTAssertEqual(store.state, .available(.keychain))
+        XCTAssertEqual(store.currentKey(), "fallback-key")
+        XCTAssertEqual(try legacy.secret(for: GeminiCredentialStore.account), "fallback-key")
+        XCTAssertTrue(defaults.bool(forKey: "geminiKeychainBackend"))
+    }
+
+    func testReadFallsBackToLegacyOnEntitlementError() throws {
+        let defaults = makeDefaults()
+        let primary = InMemorySecretStore()
+        primary.failReadsWith = .unexpected(errSecParam)
+        let legacy = InMemorySecretStore()
+        try legacy.setSecret("legacy-key", account: GeminiCredentialStore.account)
+
+        let store = GeminiCredentialStore(
+            secretStore: primary,
+            environment: [:],
+            generator: FakeGeminiGenerator(),
+            defaults: defaults,
+            legacyStoreFactory: { legacy }
+        )
+
+        XCTAssertEqual(store.state, .available(.keychain))
+        XCTAssertEqual(store.currentKey(), "legacy-key")
+    }
+
+    func testPersistedLegacyBackendIsReused() throws {
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: "geminiKeychainBackend")
+        let injected = InMemorySecretStore()
+        try injected.setSecret("persisted-key", account: GeminiCredentialStore.account)
+
+        let store = GeminiCredentialStore(
+            secretStore: injected,
+            environment: [:],
+            generator: FakeGeminiGenerator(),
+            defaults: defaults
+        )
+
+        XCTAssertEqual(store.currentKey(), "persisted-key")
+    }
+
+    func testBothKeychainsUnavailableSurfacesActionableError() {
+        let defaults = makeDefaults()
+        let primary = InMemorySecretStore()
+        primary.failReadsWith = .missingEntitlement
+        let legacy = InMemorySecretStore()
+        legacy.failReadsWith = .missingEntitlement
+
+        let store = GeminiCredentialStore(
+            secretStore: primary,
+            environment: [:],
+            generator: FakeGeminiGenerator(),
+            defaults: defaults,
+            legacyStoreFactory: { legacy }
+        )
+
+        guard case .failed(let message) = store.state else {
+            return XCTFail("expected failed state, got \(store.state)")
+        }
+        XCTAssertTrue(message.contains("Keychain"))
+        XCTAssertTrue(defaults.bool(forKey: "geminiKeychainBackend"))
     }
 }

@@ -42,8 +42,9 @@ struct FileTreeService: Sendable {
                 let isDirectory = values?.isDirectory == true
 
                 if isDirectory {
+                    // Empty folders are kept in the tree so a freshly created
+                    // folder stays visible and files can be added inside it.
                     let nestedChildren = try children(of: url, rootURL: rootURL)
-                    if nestedChildren.isEmpty { return nil }
                     return WorkspaceFile(url: url, rootURL: rootURL, kind: .folder, children: nestedChildren)
                 }
 

@@ -20,24 +20,42 @@ final class GeminiCredentialStore: ObservableObject {
 
     static let account = "gemini-api-key"
     static let service = "com.recurse.glassmark"
+    private static let backendDefaultsKey = "geminiKeychainBackend"
 
     @Published private(set) var state: AccessState = .unknown
     @Published private(set) var lastErrorMessage: String?
 
-    private var secretStore: SecretStoring
     private let environment: [String: String]
     private let generator: GeminiGenerating
+    private let defaults: UserDefaults
+    private let legacyStoreFactory: () -> SecretStoring
+    private var secretStore: SecretStoring
+    private var usingLegacyStore: Bool
     private var cachedSecret: String?
 
     init(
-        secretStore: SecretStoring = KeychainSecretStore(),
+        secretStore: SecretStoring? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        generator: GeminiGenerating = GeminiClient()
+        generator: GeminiGenerating = GeminiClient(),
+        defaults: UserDefaults = .standard,
+        legacyStoreFactory: (() -> SecretStoring)? = nil
     ) {
-        self.secretStore = secretStore
         self.environment = environment
         self.generator = generator
-        reloadWithFallback()
+        self.defaults = defaults
+        self.legacyStoreFactory = legacyStoreFactory ?? {
+            KeychainSecretStore(service: GeminiCredentialStore.service, useDataProtection: false)
+        }
+        let persistedLegacy = defaults.bool(forKey: Self.backendDefaultsKey)
+        self.usingLegacyStore = persistedLegacy
+        if let secretStore {
+            self.secretStore = secretStore
+        } else if persistedLegacy {
+            self.secretStore = KeychainSecretStore(service: Self.service, useDataProtection: false)
+        } else {
+            self.secretStore = KeychainSecretStore(service: Self.service, useDataProtection: true)
+        }
+        refresh()
     }
 
     var isConfigured: Bool {
@@ -53,13 +71,9 @@ final class GeminiCredentialStore: ObservableObject {
     /// it deliberately does not fall back after a keychain access denial.
     func currentKey() -> String? {
         if cachedSecret == nil {
-            reloadWithFallback()
+            refresh()
         }
         return cachedSecret
-    }
-
-    func refresh() {
-        reloadWithFallback()
     }
 
     func save(key: String) {
@@ -69,9 +83,9 @@ final class GeminiCredentialStore: ObservableObject {
             return
         }
         do {
-            try secretStore.setSecret(trimmed, account: Self.account)
+            try performWithFallback { try $0.setSecret(trimmed, account: Self.account) }
             lastErrorMessage = nil
-            reloadWithFallback()
+            refresh()
         } catch {
             lastErrorMessage = Self.message(for: error)
         }
@@ -79,9 +93,9 @@ final class GeminiCredentialStore: ObservableObject {
 
     func remove() {
         do {
-            try secretStore.removeSecret(account: Self.account)
+            try performWithFallback { try $0.removeSecret(account: Self.account) }
             lastErrorMessage = nil
-            reloadWithFallback()
+            refresh()
         } catch {
             lastErrorMessage = Self.message(for: error)
         }
@@ -116,42 +130,27 @@ final class GeminiCredentialStore: ObservableObject {
 
     // MARK: - Loading
 
-    private func reloadWithFallback() {
+    func refresh() {
         do {
-            try load(from: secretStore)
-        } catch SecretStoreError.missingEntitlement {
-            fallBackToLegacyKeychain()
-        } catch SecretStoreError.unexpected(let status) where status == errSecParam {
-            fallBackToLegacyKeychain()
-        } catch SecretStoreError.accessDenied {
-            cachedSecret = nil
-            state = .denied
-        } catch {
-            cachedSecret = nil
-            state = .failed(Self.message(for: error))
-        }
-    }
-
-    private func fallBackToLegacyKeychain() {
-        let legacy = KeychainSecretStore(service: Self.service, useDataProtection: false)
-        secretStore = legacy
-        do {
-            try load(from: legacy)
-        } catch {
-            cachedSecret = nil
-            state = .failed(Self.message(for: error))
-        }
-    }
-
-    private func load(from store: SecretStoring) throws {
-        do {
-            if let secret = try store.secret(for: Self.account), !secret.isEmpty {
+            let secret = try performWithFallback { try $0.secret(for: Self.account) }
+            if let secret, !secret.isEmpty {
                 cachedSecret = secret
                 state = .available(.keychain)
                 return
             }
         } catch let error as SecretStoreError {
-            throw error
+            cachedSecret = nil
+            switch error {
+            case .accessDenied:
+                state = .denied
+            default:
+                state = .failed(Self.message(for: error))
+            }
+            return
+        } catch {
+            cachedSecret = nil
+            state = .failed(Self.message(for: error))
+            return
         }
 
         if let override = Self.developmentOverride(in: environment) {
@@ -161,6 +160,27 @@ final class GeminiCredentialStore: ObservableObject {
             cachedSecret = nil
             state = .missing
         }
+    }
+
+    /// The Data Protection keychain needs entitlements that ad-hoc development
+    /// builds do not carry (errSecMissingEntitlement on write). When that shows
+    /// up, switch to the legacy keychain once and remember the choice.
+    private func performWithFallback<T>(_ operation: (SecretStoring) throws -> T) throws -> T {
+        do {
+            return try operation(secretStore)
+        } catch let error as SecretStoreError where error.isEntitlementIssue {
+            guard switchToLegacyStore() else { throw error }
+            return try operation(secretStore)
+        }
+    }
+
+    @discardableResult
+    private func switchToLegacyStore() -> Bool {
+        guard !usingLegacyStore else { return false }
+        usingLegacyStore = true
+        defaults.set(true, forKey: Self.backendDefaultsKey)
+        secretStore = legacyStoreFactory()
+        return true
     }
 
     private static func developmentOverride(in environment: [String: String]) -> String? {
@@ -173,15 +193,24 @@ final class GeminiCredentialStore: ObservableObject {
     }
 
     private static func message(for error: Error) -> String {
+        let hint = developmentHint.map { " \($0)" } ?? ""
         switch error {
         case SecretStoreError.accessDenied:
-            return "Keychain access was denied. Unlock the login keychain and try again."
+            return "Keychain access was denied. Unlock the login keychain (or choose Always Allow) and try again."
         case SecretStoreError.missingEntitlement:
-            return "This build cannot access the keychain (missing entitlement)."
+            return "Keychain is unavailable in this build." + hint
         case SecretStoreError.unexpected(let status):
-            return "Keychain error (\(status))."
+            return "Keychain error (\(status))." + hint
         default:
             return error.localizedDescription
         }
+    }
+
+    private static var developmentHint: String? {
+        #if DEBUG
+        return "For development you can set GEMINI_API_KEY in .env and launch with script/build_and_run.sh."
+        #else
+        return nil
+        #endif
     }
 }

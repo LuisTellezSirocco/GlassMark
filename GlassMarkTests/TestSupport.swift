@@ -6,6 +6,7 @@ final class InMemorySecretStore: SecretStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [String: String] = [:]
     var failReadsWith: SecretStoreError?
+    var failWritesWith: SecretStoreError?
 
     func secret(for account: String) throws -> String? {
         lock.lock()
@@ -17,12 +18,14 @@ final class InMemorySecretStore: SecretStoring, @unchecked Sendable {
     func setSecret(_ secret: String, account: String) throws {
         lock.lock()
         defer { lock.unlock() }
+        if let failWritesWith { throw failWritesWith }
         storage[account] = secret
     }
 
     func removeSecret(account: String) throws {
         lock.lock()
         defer { lock.unlock() }
+        if let failWritesWith { throw failWritesWith }
         storage[account] = nil
     }
 }

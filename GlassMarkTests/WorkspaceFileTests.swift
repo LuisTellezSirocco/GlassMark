@@ -22,6 +22,17 @@ final class WorkspaceFileTests: XCTestCase {
         XCTAssertFalse(WorkspaceFile(url: root.appendingPathComponent("a.md"), rootURL: root, kind: .markdown).isDirectory)
     }
 
+    func testMoveValidationBlocksSelfAndOwnDescendants() {
+        let folder = WorkspaceFile(url: root.appendingPathComponent("docs"), rootURL: root, kind: .folder)
+        let child = WorkspaceFile(url: root.appendingPathComponent("docs/child.md"), rootURL: root, kind: .markdown)
+        let sibling = WorkspaceFile(url: root.appendingPathComponent("note.md"), rootURL: root, kind: .markdown)
+
+        XCTAssertTrue(folder.canAcceptMove(of: sibling))
+        XCTAssertTrue(folder.canAcceptMove(of: child), "moving a child onto its own folder is a no-op, not a cycle")
+        XCTAssertFalse(folder.canAcceptMove(of: folder), "an item cannot be dropped onto itself")
+        XCTAssertFalse(child.canAcceptMove(of: folder), "a folder cannot be moved into its own descendant")
+    }
+
     func testWorkspaceDecodesLenidentlyWithoutAdditiveFields() throws {
         // A blob saved by an older build that predates isPinned / colorName.
         let json = """

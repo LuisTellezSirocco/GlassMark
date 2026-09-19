@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift 6">
   <img src="https://img.shields.io/badge/built%20with-SwiftUI-0A84FF?style=flat-square" alt="Built with SwiftUI">
   <img src="https://img.shields.io/badge/preview-100%25%20offline-1dc880?style=flat-square" alt="Offline preview">
-  <img src="https://img.shields.io/badge/tests-158%20passing-1dc880?style=flat-square" alt="158 tests passing">
+  <img src="https://img.shields.io/badge/tests-195%20passing-1dc880?style=flat-square" alt="195 tests passing">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7c5cf8?style=flat-square" alt="License MIT"></a>
   <a href="https://github.com/nerkza/GlassMark/stargazers"><img src="https://img.shields.io/github/stars/nerkza/GlassMark?style=flat-square&color=f5a623" alt="Stars"></a>
   <a href="https://buymeacoffee.com/lewiscookson"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-ffdd00?style=flat-square&logo=buymeacoffee&logoColor=000000" alt="Buy me a coffee"></a>
@@ -78,7 +78,7 @@ Everything renders **natively and offline**: code highlighting, math, and diagra
 | 🎭 **Themes + custom CSS** | System, Sepia, High Contrast, and Dark preview themes — plus your own stylesheet. |
 | 📤 **Export** | One-click export to **HTML** or **PDF**. |
 | 🪟 **Multiple workspaces** | Remembered folders with security-scoped bookmarks, a workspace rail, and per-workspace colors. |
-| 🧰 **Full file management** | Create, rename, duplicate, cut/copy/paste, drag-to-move, delete-to-Trash, reveal in Finder. |
+| 🧰 **Full file management** | Create nested folders, rename, duplicate, cut/copy/paste, drag-to-move, delete-to-Trash, reveal in Finder. |
 | 🔎 **Quick Open & Find** | Fuzzy file switching ( `⌘P` ) and the native find bar ( `⌘F` ). |
 | 💾 **Autosave & session restore** | Optional autosave; reopens the files you had open per workspace. |
 | 🧮 **Live stats** | Word, character, and line counts plus estimated reading time. |
@@ -129,6 +129,7 @@ Glassmark does not check for or install updates on its own. To update your build
 | Action | Shortcut |
 | --- | --- |
 | New Markdown file | `⌘N` |
+| New folder | `⇧⌘N` |
 | Open workspace | `⇧⌘O` |
 | Quick Open | `⌘P` |
 | Save | `⌘S` |
@@ -136,6 +137,7 @@ Glassmark does not check for or install updates on its own. To update your build
 | Refresh workspace | `⌘R` |
 | Toggle outline | `⌥⌘0` |
 | Focus mode | `⌃⌘F` |
+| Make text bigger / smaller | `⇧⌘.` / `⇧⌘,` |
 | Bold / Italic / Inline code | `⌘B` / `⌘I` / `⌘E` |
 | Strikethrough | `⇧⌘X` |
 | Insert link | `⌘K` |

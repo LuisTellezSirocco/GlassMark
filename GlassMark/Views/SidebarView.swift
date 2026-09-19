@@ -3,10 +3,9 @@ import SwiftUI
 struct SidebarView: View {
     @EnvironmentObject private var workspaceStore: WorkspaceStore
     @EnvironmentObject private var documentStore: DocumentStore
-    @State private var filePendingRename: WorkspaceFile?
-    @State private var renameText = ""
     @State private var filePendingTrash: WorkspaceFile?
     @State private var expandedFileIDs: Set<WorkspaceFile.ID> = []
+    @State private var draggingFile: WorkspaceFile?
     @State private var fileClipboard: FileClipboardItem?
 
     var body: some View {
@@ -27,28 +26,48 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                 } else if workspaceStore.fileTree.isEmpty {
-                    ContentUnavailableView("No Markdown Files", systemImage: "doc.text.magnifyingglass")
+                    EmptyWorkspaceFilesView(
+                        onNewMarkdownFile: {
+                            guard let file = workspaceStore.createMarkdownFile(),
+                                  let workspace = workspaceStore.activeWorkspace else { return }
+
+                            documentStore.open(file, workspace: workspace)
+                        },
+                        onNewFolder: {
+                            guard let folder = workspaceStore.createFolder() else { return }
+                            workspaceStore.beginRename(folder)
+                        }
+                    )
                 } else {
                     FileTreeView(
                         files: workspaceStore.fileTree,
                         selectedFileID: documentStore.document?.file.id,
                         expandedFileIDs: $expandedFileIDs,
+                        draggingFile: $draggingFile,
                         onSelect: { file in
                             guard let workspace = workspaceStore.activeWorkspace else { return }
                             documentStore.open(file, workspace: workspace)
                         },
                         onNewMarkdownFile: { file in
+                            if file.isDirectory {
+                                expandedFileIDs.insert(file.id)
+                            }
+
                             guard let newFile = workspaceStore.createMarkdownFile(nextTo: file),
                                   let workspace = workspaceStore.activeWorkspace else { return }
 
                             documentStore.open(newFile, workspace: workspace)
                         },
                         onNewFolder: { file in
-                            workspaceStore.createFolder(nextTo: file)
+                            if file.isDirectory {
+                                expandedFileIDs.insert(file.id)
+                            }
+
+                            guard let folder = workspaceStore.createFolder(nextTo: file) else { return }
+                            workspaceStore.beginRename(folder)
                         },
                         onRename: { file in
-                            filePendingRename = file
-                            renameText = file.name
+                            workspaceStore.beginRename(file)
                         },
                         onCut: { file in
                             fileClipboard = FileClipboardItem(file: file, operation: .cut)
@@ -70,25 +89,30 @@ struct SidebarView: View {
                             filePendingTrash = file
                         },
                         onMove: { source, target in
-                            guard let workspace = workspaceStore.activeWorkspace,
-                                  let newURL = workspaceStore.move(source, to: target) else { return }
-
-                            documentStore.moveOpenDocuments(from: source, to: newURL, rootURL: workspace.rootURL)
+                            move(source, to: target)
+                        },
+                        onMoveToRoot: { file in
+                            guard let workspace = workspaceStore.activeWorkspace else { return }
+                            let rootTarget = WorkspaceFile(
+                                url: workspace.rootURL,
+                                rootURL: workspace.rootURL,
+                                kind: .folder
+                            )
+                            move(file, to: rootTarget, expandsTarget: false)
                         }
                     )
                 }
             }
         }
-        .alert("Rename", isPresented: renameBinding, presenting: filePendingRename) { file in
-            TextField("Name", text: $renameText)
+        .alert("Rename", isPresented: renameBinding, presenting: workspaceStore.pendingRenameFile) { file in
+            TextField("Name", text: $workspaceStore.pendingRenameText)
 
             Button("Rename") {
-                workspaceStore.rename(file, to: renameText)
-                filePendingRename = nil
+                workspaceStore.commitRename()
             }
 
             Button("Cancel", role: .cancel) {
-                filePendingRename = nil
+                workspaceStore.cancelRename()
             }
         } message: { file in
             Text("Enter a new name for \(file.name).")
@@ -110,10 +134,10 @@ struct SidebarView: View {
 
     private var renameBinding: Binding<Bool> {
         Binding(
-            get: { filePendingRename != nil },
+            get: { workspaceStore.pendingRenameFile != nil },
             set: { isPresented in
                 if !isPresented {
-                    filePendingRename = nil
+                    workspaceStore.cancelRename()
                 }
             }
         )
@@ -128,6 +152,16 @@ struct SidebarView: View {
                 }
             }
         )
+    }
+
+    private func move(_ source: WorkspaceFile, to target: WorkspaceFile, expandsTarget: Bool = true) {
+        guard let workspace = workspaceStore.activeWorkspace,
+              let newURL = workspaceStore.move(source, to: target) else { return }
+
+        if expandsTarget, target.isDirectory {
+            expandedFileIDs.insert(target.id)
+        }
+        documentStore.moveOpenDocuments(from: source, to: newURL, rootURL: workspace.rootURL)
     }
 
     private func pasteClipboard(to target: WorkspaceFile) {
@@ -154,6 +188,22 @@ private struct FileClipboardItem {
 private enum FileClipboardOperation {
     case cut
     case copy
+}
+
+private struct EmptyWorkspaceFilesView: View {
+    let onNewMarkdownFile: () -> Void
+    let onNewFolder: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No Files Yet", systemImage: "doc.text.magnifyingglass")
+        } description: {
+            Text("Create a Markdown file or a folder to organize your notes.")
+        } actions: {
+            Button("New Markdown File", action: onNewMarkdownFile)
+            Button("New Folder", action: onNewFolder)
+        }
+    }
 }
 
 private struct WorkspaceRailView: View {

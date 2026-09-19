@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @MainActor
@@ -9,6 +10,11 @@ final class PreferencesStore: ObservableObject {
     @AppStorage("customPreviewCSS") var customPreviewCSS = ""
     @AppStorage("focusModeEnabled") var focusModeEnabled = false
     @AppStorage("typewriterModeEnabled") var typewriterModeEnabled = false
+    /// Shows a quiet gutter of logical line numbers in the editor (View ▸ Line Numbers).
+    @AppStorage("showLineNumbers") var showLineNumbers = false
+    /// Document text size, adjusted with the Notes-style "Make Text Bigger/Smaller"
+    /// commands (⇧⌘. / ⇧⌘,). Scales the editor text and the preview alike.
+    @AppStorage("textSize") var textSize: Double = DocumentTextSize.defaultSize
     /// Inline AI editing is opt-in. The API key lives in the keychain, never here.
     @AppStorage("aiEditingEnabled") var aiEditingEnabled = false
     /// Any Interactions API model ID can be typed here; presets are offered in Settings.
@@ -22,6 +28,44 @@ final class PreferencesStore: ObservableObject {
         case .light: .light
         case .dark: .dark
         }
+    }
+
+    var canIncreaseTextSize: Bool {
+        textSize < DocumentTextSize.maximumSize
+    }
+
+    var canDecreaseTextSize: Bool {
+        textSize > DocumentTextSize.minimumSize
+    }
+
+    /// Scales the web preview so its text grows and shrinks with the editor.
+    var previewZoomScale: Double {
+        textSize / DocumentTextSize.defaultSize
+    }
+
+    func increaseTextSize() {
+        textSize = DocumentTextSize.increased(textSize)
+    }
+
+    func decreaseTextSize() {
+        textSize = DocumentTextSize.decreased(textSize)
+    }
+}
+
+/// Bounds and stepping for the user-adjustable document text size.
+enum DocumentTextSize {
+    /// Matches the font size the editor has always used by default.
+    static let defaultSize = Double(NSFont.systemFontSize)
+    static let minimumSize = 9.0
+    static let maximumSize = 32.0
+    static let step = 1.0
+
+    static func increased(_ size: Double) -> Double {
+        min(size + step, maximumSize)
+    }
+
+    static func decreased(_ size: Double) -> Double {
+        max(size - step, minimumSize)
     }
 }
 
