@@ -6,21 +6,13 @@ struct ContentView: View {
     @EnvironmentObject private var preferencesStore: PreferencesStore
     @EnvironmentObject private var commandStore: CommandStore
     @EnvironmentObject private var credentialStore: GeminiCredentialStore
+    @EnvironmentObject private var chatCoordinator: ChatCoordinator
 
     @StateObject private var inlineEditStore = InlineEditStore(windowID: UUID())
+    @StateObject private var copilotPanel = CopilotPanelController()
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
-        } detail: {
-            DetailWorkspaceView()
-        }
-        .toolbar { toolbarContent }
-        .inspector(isPresented: $commandStore.isOutlineVisible) {
-            OutlineView()
-                .inspectorColumnWidth(min: 200, ideal: 240, max: 360)
-        }
+        workspaceLayout
         .alert("Workspace Error", isPresented: workspaceErrorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -57,6 +49,10 @@ struct ContentView: View {
             guard preferencesStore.viewMode != .previewOnly else { return }
             inlineEditStore.activate()
         })
+        .focusedSceneValue(\.copilot, CopilotAction(
+            isPresented: copilotPanel.isPresented,
+            perform: toggleCopilot
+        ))
         .onAppear {
             inlineEditStore.configure(
                 credentials: credentialStore,
@@ -75,6 +71,39 @@ struct ContentView: View {
         }
         .onChange(of: credentialStore.state) {
             inlineEditStore.credentialsChanged()
+            chatCoordinator.cancelAll()
+        }
+        .onChange(of: commandStore.isOutlineVisible) {
+            if commandStore.isOutlineVisible {
+                copilotPanel.hide()
+            }
+        }
+        .onDisappear {
+            copilotPanel.hide()
+        }
+    }
+
+    private var workspaceLayout: some View {
+        NavigationSplitView {
+            SidebarView()
+                .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
+        } detail: {
+            GeometryReader { geometry in
+                HSplitView {
+                    DetailWorkspaceView()
+                        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                    if copilotPanel.isPresented, let store = copilotPanel.store {
+                        CopilotPanelView(store: store, onClose: copilotPanel.hide)
+                            .frame(minWidth: 340, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+        }
+        .toolbar { toolbarContent }
+        .inspector(isPresented: $commandStore.isOutlineVisible) {
+            OutlineView()
+                .inspectorColumnWidth(min: 200, ideal: 240, max: 360)
         }
     }
 
@@ -134,7 +163,30 @@ struct ContentView: View {
                 documentStore.save()
             }
             .disabled(!documentStore.canSave)
+
+            Button {
+                toggleCopilot()
+            } label: {
+                Label("Copilot", systemImage: "bubble.left.and.bubble.right")
+            }
+            .tint(copilotPanel.isPresented ? Color.accentColor : nil)
+            .help(copilotPanel.isPresented ? "Hide Copilot (⌃⌘C)" : "Show Copilot (⌃⌘C)")
         }
+    }
+
+    private func toggleCopilot() {
+        if copilotPanel.isPresented {
+            copilotPanel.hide()
+            return
+        }
+        commandStore.isOutlineVisible = false
+        copilotPanel.show(
+            workspaceStore: workspaceStore,
+            documentStore: documentStore,
+            preferences: preferencesStore,
+            credentials: credentialStore,
+            coordinator: chatCoordinator
+        )
     }
 
     private var workspaceErrorBinding: Binding<Bool> {
@@ -324,11 +376,24 @@ private struct EditorPreviewContainerView: View {
         case .editorOnly:
             EditorView()
         case .split:
-            HSplitView {
-                EditorView()
-                    .frame(minWidth: 360)
-                PreviewView()
-                    .frame(minWidth: 360)
+            GeometryReader { geometry in
+                if geometry.size.width >= 720 {
+                    HSplitView {
+                        EditorView()
+                            .frame(minWidth: 360)
+                        PreviewView()
+                            .frame(minWidth: 360)
+                    }
+                } else {
+                    // Copilot can leave too little width for two readable
+                    // document columns. Keep both views inside the editor area.
+                    VSplitView {
+                        EditorView()
+                            .frame(minHeight: 160)
+                        PreviewView()
+                            .frame(minHeight: 160)
+                    }
+                }
             }
         case .previewOnly:
             PreviewView()

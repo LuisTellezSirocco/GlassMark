@@ -90,16 +90,17 @@ final class LineNumberGutterView: NSView {
             let visibleGlyphs = layoutManager.glyphRange(forBoundingRect: visibleInContainer, in: textContainer)
 
             if visibleGlyphs.location != NSNotFound, visibleGlyphs.length > 0 {
-                layoutManager.enumerateLineFragments(forGlyphRange: visibleGlyphs) { fragmentRect, _, _, fragmentGlyphRange, _ in
+                layoutManager.enumerateLineFragments(forGlyphRange: visibleGlyphs) { fragmentRect, usedRect, _, fragmentGlyphRange, _ in
                     let charRange = layoutManager.characterRange(forGlyphRange: fragmentGlyphRange, actualGlyphRange: nil)
                     let location = min(charRange.location, nsString.length)
                     // A fragment opens a logical line only at the very start of
                     // the document or right after a newline. The continuation of
                     // a soft wrap follows a regular character and stays bare.
                     guard location == 0 || nsString.character(at: location - 1) == 0x0A else { return }
+                    let anchorRect = usedRect.height > 0 ? usedRect : fragmentRect
                     let label = GutterLabel(
                         number: LineIndex.lineNumber(forCharacterAt: location, lineStarts: self.lineStarts),
-                        rect: self.gutterRect(forContainerRect: fragmentRect)
+                        rect: self.gutterRect(forContainerRect: anchorRect)
                     )
                     if label.rect.intersects(dirtyRect) { labels.append(label) }
                 }
@@ -113,9 +114,12 @@ final class LineNumberGutterView: NSView {
         }
         if nsString.length == 0 || nsString.character(at: nsString.length - 1) == 0x0A,
            layoutManager.extraLineFragmentTextContainer != nil {
+            let anchorRect = layoutManager.extraLineFragmentUsedRect.height > 0
+                ? layoutManager.extraLineFragmentUsedRect
+                : layoutManager.extraLineFragmentRect
             let label = GutterLabel(
                 number: LineIndex.lineNumber(forCharacterAt: nsString.length, lineStarts: lineStarts),
-                rect: gutterRect(forContainerRect: layoutManager.extraLineFragmentRect)
+                rect: gutterRect(forContainerRect: anchorRect)
             )
             if label.rect.intersects(dirtyRect) { labels.append(label) }
         }

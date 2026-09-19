@@ -15,12 +15,25 @@ final class PreferencesStore: ObservableObject {
     /// Document text size, adjusted with the Notes-style "Make Text Bigger/Smaller"
     /// commands (⇧⌘. / ⇧⌘,). Scales the editor text and the preview alike.
     @AppStorage("textSize") var textSize: Double = DocumentTextSize.defaultSize
+    @AppStorage("logicalLineSpacing")
+    private var storedLogicalLineSpacing = DocumentLogicalLineSpacing.defaultValue
     /// Inline AI editing is opt-in. The API key lives in the keychain, never here.
     @AppStorage("aiEditingEnabled") var aiEditingEnabled = false
     /// Any Interactions API model ID can be typed here; presets are offered in Settings.
     @AppStorage("aiModel") var aiModel = AIModelCatalog.defaultModelID
+    /// Copilot chat is independently opt-in from inline AI editing.
+    @AppStorage("copilotChatEnabled") var copilotChatEnabled = false
+    /// Model copied into newly-created chat conversations.
+    @AppStorage("copilotDefaultModelID") var copilotDefaultModelID = AIModelCatalog.defaultModelID
     /// Transient request to focus a specific Settings tab ("Open AI Settings").
     @Published var requestedSettingsTab: SettingsTab?
+
+    /// Extra space, in AppKit points, between separate Markdown source lines.
+    /// The effective value is always normalized before it reaches the editor.
+    var logicalLineSpacing: Double {
+        get { DocumentLogicalLineSpacing.normalized(storedLogicalLineSpacing) }
+        set { storedLogicalLineSpacing = DocumentLogicalLineSpacing.normalized(newValue) }
+    }
 
     var resolvedColorScheme: ColorScheme? {
         switch appearancePreference {
@@ -66,6 +79,21 @@ enum DocumentTextSize {
 
     static func decreased(_ size: Double) -> Double {
         max(size - step, minimumSize)
+    }
+}
+
+/// Bounds and normalization for the editor's logical-line paragraph spacing.
+enum DocumentLogicalLineSpacing {
+    static let defaultValue = 0.0
+    static let minimumValue = 0.0
+    static let maximumValue = 100.0
+    static let step = 1.0
+
+    /// Returns a finite value inside the supported closed interval without
+    /// rounding valid fractional values.
+    static func normalized(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultValue }
+        return min(max(value, minimumValue), maximumValue)
     }
 }
 

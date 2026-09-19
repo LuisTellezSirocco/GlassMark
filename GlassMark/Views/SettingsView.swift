@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var preferencesStore: PreferencesStore
+    @EnvironmentObject private var chatCoordinator: ChatCoordinator
 
     @State private var selection: SettingsTab = .general
 
@@ -79,8 +80,25 @@ private struct EditorSettingsView: View {
             Text("Shows each line's number in a faint monospaced gutter beside the text. Wrapped lines keep a single number.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Stepper(
+                "Logical line spacing: \(preferencesStore.logicalLineSpacing.formatted(.number.precision(.fractionLength(0...1)))) pt",
+                value: logicalLineSpacingBinding,
+                in: DocumentLogicalLineSpacing.minimumValue...DocumentLogicalLineSpacing.maximumValue,
+                step: DocumentLogicalLineSpacing.step
+            )
+            Text("Adds space between separate Markdown source lines, not between wrapped parts of one long line.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(24)
+    }
+
+    private var logicalLineSpacingBinding: Binding<Double> {
+        Binding(
+            get: { preferencesStore.logicalLineSpacing },
+            set: { preferencesStore.logicalLineSpacing = $0 }
+        )
     }
 }
 
@@ -112,9 +130,11 @@ private struct PreviewSettingsView: View {
 private struct AISettingsView: View {
     @EnvironmentObject private var preferencesStore: PreferencesStore
     @EnvironmentObject private var credentialStore: GeminiCredentialStore
+    @EnvironmentObject private var chatCoordinator: ChatCoordinator
 
     @State private var keyField = ""
     @State private var testState: TestState = .idle
+    @State private var confirmingDeleteAll = false
 
     private enum TestState: Equatable {
         case idle
@@ -129,6 +149,21 @@ private struct AISettingsView: View {
             Text("Adds “Edit with Gemini…” (⌃⌘I) to the editor. Nothing is sent until you run it on a selection.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Section("Copilot chat") {
+                Toggle("Enable Copilot", isOn: $preferencesStore.copilotChatEnabled)
+                Text("Copilot sends the note captured for a chat and its conversation history to Google's Gemini API when you send a message. Unsaved changes are included. Chats are stored locally and expire 30 days after creation; Copilot cannot edit your files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("New chat model", selection: $preferencesStore.copilotDefaultModelID) {
+                    ForEach(AIModelCatalog.presets) { preset in
+                        Text(preset.title).tag(preset.id)
+                    }
+                }
+                Button("Delete all Copilot chats", role: .destructive) {
+                    confirmingDeleteAll = true
+                }
+            }
 
             Section("Model") {
                 LabeledContent("Model") {
@@ -182,7 +217,7 @@ private struct AISettingsView: View {
                     Button("Test connection") { testConnection() }
                         .disabled(
                             !credentialStore.isConfigured
-                                || !preferencesStore.aiEditingEnabled
+                                || (!preferencesStore.aiEditingEnabled && !preferencesStore.copilotChatEnabled)
                                 || testState == .running
                         )
                     if testState == .running {
@@ -202,6 +237,17 @@ private struct AISettingsView: View {
         }
         .padding(24)
         .onAppear { credentialStore.refresh() }
+        .onChange(of: preferencesStore.copilotChatEnabled) {
+            if !preferencesStore.copilotChatEnabled {
+                chatCoordinator.cancelAll()
+            }
+        }
+        .alert("Delete all Copilot chats?", isPresented: $confirmingDeleteAll) {
+            Button("Delete All", role: .destructive) { deleteAllChats() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes local conversations, drafts, note snapshots, and replay data. It cannot be undone.")
+        }
     }
 
     @ViewBuilder
@@ -248,15 +294,24 @@ private struct AISettingsView: View {
 
     private func testConnection() {
         testState = .running
-        let model = preferencesStore.aiModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredModel = preferencesStore.copilotChatEnabled
+            ? preferencesStore.copilotDefaultModelID
+            : preferencesStore.aiModel
+        let model = configuredModel.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
-            let result = await credentialStore.testConnection(model: model)
+            let result = await credentialStore.testChatConnection(model: model)
             switch result {
             case .success:
                 testState = .success("Connection OK")
             case .failure(let error):
                 testState = .failure(error.userMessage)
             }
+        }
+    }
+
+    private func deleteAllChats() {
+        Task {
+            try? await chatCoordinator.deleteAll()
         }
     }
 }

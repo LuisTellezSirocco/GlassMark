@@ -63,7 +63,7 @@ enum GeminiAPIError: Error, Equatable, Sendable {
         case .invalidProtocol(let detail):
             return "Unexpected response from Gemini: \(detail)"
         case .incompleteResponse:
-            return "Gemini's response ended before it was complete; nothing was applied."
+            return "Gemini's response ended before it was complete. Retry or discard this turn."
         case .localLimit(let detail):
             return detail
         case .cancelled:

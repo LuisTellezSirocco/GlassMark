@@ -13,7 +13,8 @@ final class LineNumberGutterViewTests: XCTestCase {
         text: String,
         width: CGFloat = 420,
         height: CGFloat = 320,
-        gutterVisible: Bool = true
+        gutterVisible: Bool = true,
+        logicalLineSpacing: CGFloat = 0
     ) -> (container: EditorContainerView, scrollView: NSScrollView, textView: NSTextView, gutter: LineNumberGutterView) {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -32,6 +33,16 @@ final class LineNumberGutterViewTests: XCTestCase {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
         textView.string = text
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 0
+        paragraphStyle.paragraphSpacing = logicalLineSpacing
+        if let textStorage = textView.textStorage, textStorage.length > 0 {
+            textStorage.addAttribute(
+                .paragraphStyle,
+                value: paragraphStyle.copy() as! NSParagraphStyle,
+                range: NSRange(location: 0, length: textStorage.length)
+            )
+        }
         scrollView.documentView = textView
 
         let gutter = LineNumberGutterView(textView: textView)
@@ -217,6 +228,56 @@ final class LineNumberGutterViewTests: XCTestCase {
         XCTAssertEqual(gutter.labels(in: everything).map(\.number), [1, 2, 3])
     }
 
+    func testLogicalSpacingDoesNotCreateNumbersForWrappedFragments() {
+        let first = String(repeating: "wrap ", count: 30).trimmingCharacters(in: .whitespaces)
+        let (_, _, textView, gutter) = makeEditor(
+            text: first + "\nsecond",
+            width: 240,
+            logicalLineSpacing: 20
+        )
+
+        XCTAssertGreaterThan(lineFragmentCount(in: textView), 2, "precondition: the first line must wrap")
+        XCTAssertEqual(gutter.labels(in: everything).map(\.number), [1, 2])
+    }
+
+    func testGutterLabelsStayCenteredOnTextWhenLogicalSpacingIsLarge() {
+        let (_, _, textView, gutter) = makeEditor(
+            text: "first logical line\nsecond logical line",
+            logicalLineSpacing: 40
+        )
+        let labels = gutter.labels(in: everything)
+
+        var usedRects: [NSRect] = []
+        guard let layoutManager = textView.layoutManager else {
+            XCTFail("the editor should have a layout manager")
+            return
+        }
+        let nsString = textView.string as NSString
+        layoutManager.enumerateLineFragments(
+            forGlyphRange: NSRange(location: 0, length: layoutManager.numberOfGlyphs)
+        ) { _, usedRect, _, fragmentGlyphRange, _ in
+            let characterRange = layoutManager.characterRange(
+                forGlyphRange: fragmentGlyphRange,
+                actualGlyphRange: nil
+            )
+            let location = min(characterRange.location, nsString.length)
+            if location == 0 || nsString.character(at: location - 1) == 0x0A {
+                usedRects.append(usedRect)
+            }
+        }
+
+        XCTAssertEqual(labels.map(\.number), [1, 2])
+        XCTAssertEqual(usedRects.count, 2)
+        XCTAssertEqual(labels.count, usedRects.count)
+        for (label, usedRect) in zip(labels, usedRects) {
+            let converted = gutter.convert(
+                usedRect.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y),
+                from: textView
+            )
+            XCTAssertEqual(label.rect.midY, converted.midY, accuracy: 0.5)
+        }
+    }
+
     func testLabelsIncludeBlankAndTrailingEmptyLines() {
         let (_, _, _, gutter) = makeEditor(text: "alpha\n\nbeta\n")
 
@@ -261,6 +322,7 @@ final class LineNumberGutterViewTests: XCTestCase {
             typewriterMode: false,
             showLineNumbers: true,
             fontSize: 14,
+            logicalLineSpacing: 0,
             editorID: UUID(),
             windowID: UUID(),
             workspaceID: UUID(),

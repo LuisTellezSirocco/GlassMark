@@ -7,6 +7,7 @@ struct AppCommands: Commands {
     @ObservedObject var preferencesStore: PreferencesStore
 
     @FocusedValue(\.inlineEdit) private var inlineEditAction
+    @FocusedValue(\.copilot) private var copilotAction
 
     var body: some Commands {
         CommandGroup(after: .pasteboard) {
@@ -19,6 +20,12 @@ struct AppCommands: Commands {
                     || documentStore.document == nil
                     || preferencesStore.viewMode == .previewOnly
             )
+
+            Button(copilotAction?.isPresented == true ? "Hide Copilot" : "Show Copilot") {
+                copilotAction?.perform()
+            }
+            .keyboardShortcut("c", modifiers: [.control, .command])
+            .disabled(copilotAction == nil)
         }
 
         // Replaces the standard New Item group so ⌘N creates a Markdown file

@@ -32,6 +32,7 @@ struct EditorView: View {
                         typewriterMode: preferencesStore.typewriterModeEnabled,
                         showLineNumbers: preferencesStore.showLineNumbers,
                         fontSize: preferencesStore.textSize,
+                        logicalLineSpacing: preferencesStore.logicalLineSpacing,
                         editorID: editorID,
                         windowID: inlineEditStore.windowID,
                         workspaceID: document.workspaceID,
@@ -246,6 +247,8 @@ struct MarkdownTextView: NSViewRepresentable {
     let showLineNumbers: Bool
     /// Base editor text size, controlled by "Make Text Bigger/Smaller" (⇧⌘. / ⇧⌘,).
     let fontSize: Double
+    /// Extra paragraph spacing between separate Markdown source lines.
+    let logicalLineSpacing: Double
 
     let editorID: UUID
     let windowID: UUID
@@ -321,6 +324,7 @@ struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.focusMode = focusMode
         context.coordinator.typewriterMode = typewriterMode
         context.coordinator.setFontSize(CGFloat(fontSize))
+        context.coordinator.setLogicalLineSpacing(CGFloat(logicalLineSpacing))
         context.coordinator.applyInlineEditConfiguration(self)
         context.coordinator.observeScrolling(of: scrollView)
         context.coordinator.applyHighlighting()
@@ -337,7 +341,9 @@ struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.applyInlineEditConfiguration(self)
         context.coordinator.setLineNumbersVisible(showLineNumbers, in: container)
 
-        if context.coordinator.setFontSize(CGFloat(fontSize)) {
+        let fontChanged = context.coordinator.setFontSize(CGFloat(fontSize))
+        let spacingChanged = context.coordinator.setLogicalLineSpacing(CGFloat(logicalLineSpacing))
+        if fontChanged || spacingChanged {
             context.coordinator.applyHighlighting()
         }
 
@@ -427,8 +433,15 @@ struct MarkdownTextView: NSViewRepresentable {
 
         private let highlighter = MarkdownSyntaxHighlighter()
         private var fontSize = CGFloat(DocumentTextSize.defaultSize)
+        private var logicalLineSpacing = CGFloat(DocumentLogicalLineSpacing.defaultValue)
         private var baseFont: NSFont {
             NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        }
+        private var baseParagraphStyle: NSParagraphStyle {
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = 0
+            style.paragraphSpacing = logicalLineSpacing
+            return style.copy() as! NSParagraphStyle
         }
         private var isObservingScrolling = false
         private var isApplyingExternalScroll = false
@@ -1237,6 +1250,18 @@ struct MarkdownTextView: NSViewRepresentable {
             return true
         }
 
+        /// Records the user's logical-line spacing after passing it through the
+        /// same finite/clamped boundary as the preferences store.
+        @discardableResult
+        func setLogicalLineSpacing(_ newValue: CGFloat) -> Bool {
+            let normalized = CGFloat(
+                DocumentLogicalLineSpacing.normalized(Double(newValue))
+            )
+            guard abs(logicalLineSpacing - normalized) > 0.001 else { return false }
+            logicalLineSpacing = normalized
+            return true
+        }
+
         // MARK: - Highlighting
 
         func applyHighlighting() {
@@ -1245,7 +1270,15 @@ struct MarkdownTextView: NSViewRepresentable {
 
             let fullRange = NSRange(location: 0, length: textStorage.length)
             textStorage.beginEditing()
-            textStorage.setAttributes([.font: baseFont, .foregroundColor: NSColor.textColor], range: fullRange)
+            let paragraphStyle = baseParagraphStyle
+            textStorage.setAttributes(
+                [
+                    .font: baseFont,
+                    .foregroundColor: NSColor.textColor,
+                    .paragraphStyle: paragraphStyle
+                ],
+                range: fullRange
+            )
 
             // Skip detailed highlighting for very large documents to stay responsive.
             if textStorage.length <= 200_000 {
@@ -1272,7 +1305,8 @@ struct MarkdownTextView: NSViewRepresentable {
             guard let textView else { return }
             var attributes: [NSAttributedString.Key: Any] = [
                 .font: baseFont,
-                .foregroundColor: NSColor.textColor
+                .foregroundColor: NSColor.textColor,
+                .paragraphStyle: baseParagraphStyle
             ]
             if let storage = textView.textStorage, storage.length > 0 {
                 let caret = min(max(0, textView.selectedRange().location), storage.length)

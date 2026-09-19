@@ -7,6 +7,17 @@ struct GlassMarkApp: App {
     @StateObject private var preferencesStore = PreferencesStore()
     @StateObject private var commandStore = CommandStore()
     @StateObject private var credentialStore = GeminiCredentialStore()
+    @StateObject private var chatCoordinator: ChatCoordinator
+    @StateObject private var chatRetentionService: ChatRetentionService
+
+    init() {
+        let coordinator = ChatCoordinator()
+        _chatCoordinator = StateObject(wrappedValue: coordinator)
+        _chatRetentionService = StateObject(wrappedValue: ChatRetentionService(
+            repository: coordinator.repository,
+            coordinator: coordinator
+        ))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -16,10 +27,12 @@ struct GlassMarkApp: App {
                 .environmentObject(preferencesStore)
                 .environmentObject(commandStore)
                 .environmentObject(credentialStore)
+                .environmentObject(chatCoordinator)
                 .frame(minWidth: 980, minHeight: 640)
                 .preferredColorScheme(preferencesStore.resolvedColorScheme)
                 .task {
                     workspaceStore.restoreKnownWorkspaces()
+                    chatRetentionService.start()
                 }
         }
         .commands {
@@ -35,6 +48,7 @@ struct GlassMarkApp: App {
             SettingsView()
                 .environmentObject(preferencesStore)
                 .environmentObject(credentialStore)
+                .environmentObject(chatCoordinator)
         }
     }
 }

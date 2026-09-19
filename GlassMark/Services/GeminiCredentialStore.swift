@@ -27,6 +27,7 @@ final class GeminiCredentialStore: ObservableObject {
 
     private let environment: [String: String]
     private let generator: GeminiGenerating
+    private let chatGenerator: ChatGenerating
     private let defaults: UserDefaults
     private let legacyStoreFactory: () -> SecretStoring
     private var secretStore: SecretStoring
@@ -37,11 +38,13 @@ final class GeminiCredentialStore: ObservableObject {
         secretStore: SecretStoring? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         generator: GeminiGenerating = GeminiClient(),
+        chatGenerator: ChatGenerating = GeminiChatClient(),
         defaults: UserDefaults = .standard,
         legacyStoreFactory: (() -> SecretStoring)? = nil
     ) {
         self.environment = environment
         self.generator = generator
+        self.chatGenerator = chatGenerator
         self.defaults = defaults
         self.legacyStoreFactory = legacyStoreFactory ?? {
             KeychainSecretStore(service: GeminiCredentialStore.service, useDataProtection: false)
@@ -119,6 +122,23 @@ final class GeminiCredentialStore: ObservableObject {
                 if case .completed = event {
                     return .success(())
                 }
+            }
+            return .failure(.incompleteResponse)
+        } catch let error as GeminiAPIError {
+            return .failure(error)
+        } catch {
+            return .failure(.transport(error.localizedDescription))
+        }
+    }
+
+    /// Chat-specific synthetic connectivity check. It never reads a document
+    /// or reuses an inline-edit prompt.
+    func testChatConnection(model: String) async -> Result<Void, GeminiAPIError> {
+        guard let key = currentKey() else { return .failure(.authentication) }
+        do {
+            let request = try GeminiChatClient.syntheticRequest(modelID: model)
+            for try await event in chatGenerator.streamChat(request, apiKey: key) {
+                if case .completed = event { return .success(()) }
             }
             return .failure(.incompleteResponse)
         } catch let error as GeminiAPIError {

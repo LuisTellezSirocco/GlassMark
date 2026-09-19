@@ -21,6 +21,12 @@ struct SSEDecoder {
     private var pendingCarriageReturn = false
     private var eventName: String?
     private var dataLines: [String] = []
+    private let maxLineBytes: Int
+    private(set) var exceededLimit = false
+
+    init(maxLineBytes: Int = 1 * 1024 * 1024) {
+        self.maxLineBytes = max(1, maxLineBytes)
+    }
 
     /// Feeds one byte and returns a message when a blank line completes one.
     mutating func consume(_ byte: UInt8) -> SSEMessage? {
@@ -67,6 +73,12 @@ struct SSEDecoder {
             return endLine()
         default:
             lineBytes.append(byte)
+            if lineBytes.count > maxLineBytes {
+                exceededLimit = true
+                // Keep framing recoverable without allowing an attacker to
+                // allocate an unbounded line before the next delimiter.
+                lineBytes.removeAll(keepingCapacity: false)
+            }
             return nil
         }
     }

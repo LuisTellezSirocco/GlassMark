@@ -6,8 +6,10 @@ import XCTest
 final class PreferencesStoreTests: XCTestCase {
     private static let textSizeKey = "textSize"
     private static let showLineNumbersKey = "showLineNumbers"
+    private static let logicalLineSpacingKey = "logicalLineSpacing"
     private var savedTextSize: Any?
     private var savedShowLineNumbers: Any?
+    private var savedLogicalLineSpacing: Any?
 
     override func setUp() async throws {
         // PreferencesStore persists through UserDefaults.standard, so keep the
@@ -16,6 +18,8 @@ final class PreferencesStoreTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: Self.textSizeKey)
         savedShowLineNumbers = UserDefaults.standard.object(forKey: Self.showLineNumbersKey)
         UserDefaults.standard.removeObject(forKey: Self.showLineNumbersKey)
+        savedLogicalLineSpacing = UserDefaults.standard.object(forKey: Self.logicalLineSpacingKey)
+        UserDefaults.standard.removeObject(forKey: Self.logicalLineSpacingKey)
     }
 
     override func tearDown() async throws {
@@ -28,6 +32,11 @@ final class PreferencesStoreTests: XCTestCase {
             UserDefaults.standard.set(savedShowLineNumbers, forKey: Self.showLineNumbersKey)
         } else {
             UserDefaults.standard.removeObject(forKey: Self.showLineNumbersKey)
+        }
+        if let savedLogicalLineSpacing {
+            UserDefaults.standard.set(savedLogicalLineSpacing, forKey: Self.logicalLineSpacingKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.logicalLineSpacingKey)
         }
     }
 
@@ -84,5 +93,59 @@ final class PreferencesStoreTests: XCTestCase {
         let store = PreferencesStore()
         store.showLineNumbers = true
         XCTAssertTrue(PreferencesStore().showLineNumbers)
+    }
+
+    func testLogicalLineSpacingDefaultsToZero() {
+        let store = PreferencesStore()
+
+        XCTAssertEqual(store.logicalLineSpacing, DocumentLogicalLineSpacing.defaultValue)
+    }
+
+    func testLogicalLineSpacingPersistsAcrossStores() {
+        let store = PreferencesStore()
+        store.logicalLineSpacing = 17
+
+        XCTAssertEqual(PreferencesStore().logicalLineSpacing, 17)
+    }
+
+    func testLogicalLineSpacingNormalizesInvalidValues() {
+        let store = PreferencesStore()
+
+        store.logicalLineSpacing = DocumentLogicalLineSpacing.minimumValue - 1
+        XCTAssertEqual(store.logicalLineSpacing, DocumentLogicalLineSpacing.minimumValue)
+
+        store.logicalLineSpacing = DocumentLogicalLineSpacing.maximumValue + 1
+        XCTAssertEqual(store.logicalLineSpacing, DocumentLogicalLineSpacing.maximumValue)
+
+        for invalid in [Double.nan, Double.infinity, -Double.infinity] {
+            store.logicalLineSpacing = invalid
+            XCTAssertEqual(store.logicalLineSpacing, DocumentLogicalLineSpacing.defaultValue)
+        }
+
+        UserDefaults.standard.set(Double.nan, forKey: Self.logicalLineSpacingKey)
+        XCTAssertEqual(PreferencesStore().logicalLineSpacing, DocumentLogicalLineSpacing.defaultValue)
+        UserDefaults.standard.set(Double.infinity, forKey: Self.logicalLineSpacingKey)
+        XCTAssertEqual(PreferencesStore().logicalLineSpacing, DocumentLogicalLineSpacing.defaultValue)
+        UserDefaults.standard.set(-Double.infinity, forKey: Self.logicalLineSpacingKey)
+        XCTAssertEqual(PreferencesStore().logicalLineSpacing, DocumentLogicalLineSpacing.defaultValue)
+    }
+
+    func testLogicalLineSpacingPreservesFiniteFractions() {
+        let store = PreferencesStore()
+
+        store.logicalLineSpacing = 12.5
+
+        XCTAssertEqual(store.logicalLineSpacing, 12.5)
+    }
+
+    func testLogicalLineSpacingPublishesChanges() {
+        let store = PreferencesStore()
+        var notifications = 0
+        let cancellable = store.objectWillChange.sink { notifications += 1 }
+
+        store.logicalLineSpacing = 12
+        cancellable.cancel()
+
+        XCTAssertGreaterThanOrEqual(notifications, 1)
     }
 }

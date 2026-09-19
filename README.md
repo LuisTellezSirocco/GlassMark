@@ -46,7 +46,7 @@
 
 Most Markdown apps want to be a publishing platform, an IDE, or a second brain. Glassmark wants to be the calmest, fastest way to **write Markdown and see it rendered as you type**. Open a folder, browse your `.md` files in a sidebar, edit on the left, watch the preview keep pace on the right. That's it — and it's polished to a shine.
 
-Everything renders **natively and offline**: code highlighting, math, and diagrams are vendored into the app, so rendering never touches the network. The only optional outbound request is AI editing, which sends just the selection you submit to Google's Gemini API with your own key.
+Everything renders **natively and offline**: code highlighting, math, and diagrams are vendored into the app, so rendering never touches the network. Optional outbound requests are limited to the AI features you explicitly invoke: inline editing sends a selected range, while Copilot sends the note snapshot and local history for the active chat to Google's Gemini API with your own key.
 
 ---
 
@@ -83,6 +83,7 @@ Everything renders **natively and offline**: code highlighting, math, and diagra
 | 💾 **Autosave & session restore** | Optional autosave; reopens the files you had open per workspace. |
 | 🧮 **Live stats** | Word, character, and line counts plus estimated reading time. |
 | 🤖 **Inline AI editing (opt-in)** | Select text, press `⌃⌘I` , describe the change and review it as a diff — **Accept** or **Discard**. Bring your own Gemini API key. |
+| 💬 **Copilot chat (opt-in)** | Toggle a resizable Copilot panel beside the editor with `⌃⌘C`, ask about the active note, keep local multi-turn history, and copy Markdown answers. Chats expire after 30 days. |
 
 Built with SwiftUI and an AppKit `NSTextView` editor, a `WKWebView` preview, and a **dependency-free Markdown renderer** that escapes all input and blocks unsafe URL schemes.
 
@@ -118,6 +119,8 @@ Glassmark can rewrite or fix a selection with Google's Gemini API. It is opt-in 
 
 The model is configurable in Settings → AI: any Interactions API model ID works, and verified presets (default `gemini-3.5-flash-lite` ) are one click away. For local development, `script/build_and_run.sh` reads `GEMINI_API_KEY` from a git-ignored `.env` file and passes it to the app as a development credential; the app never writes it to disk or logs. When you run an AI edit, only the selected text and your instruction are sent to `generativelanguage.googleapis.com` with `store: false` .
 
+Copilot is enabled separately in **Settings → AI**. When you send a chat message, Glassmark captures the note currently shown in the editor (including unsaved changes) and the completed turns of that local conversation, then sends them to Gemini with `store: false`. Copilot opens on the right of the main window, beside the editor or preview. Drag the divider to resize it, use the history button to switch chats, and close/reopen the panel without losing the selected chat or draft. Copilot only replies in chat: it cannot edit files, apply diffs, run commands, use tools, or read linked assets. Chat data is kept in the app's private SQLite store and is removed when the app next runs after the immutable 30-day retention period. Reading or deleting unexpired history works without a key or network connection.
+
 ### Updates
 
 Glassmark does not check for or install updates on its own. To update your build, pull the latest changes and rebuild with `script/build_and_run.sh` . Direct releases are cut with `script/release.sh` (see the script header for the one-time signing/notarization setup).
@@ -142,6 +145,7 @@ Glassmark does not check for or install updates on its own. To update your build
 | Strikethrough | `⇧⌘X` |
 | Insert link | `⌘K` |
 | Edit selection with Gemini | `⌃⌘I` |
+| Show / hide Copilot | `⌃⌘C` |
 | Heading 1–3 | `⌃⌘1` / `⌃⌘2` / `⌃⌘3` |
 | Export as HTML / PDF | File menu |
 

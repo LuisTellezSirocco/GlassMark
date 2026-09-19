@@ -26,6 +26,8 @@ targets:
           - "glassmark-iconset.icon"
       - path: GlassMark/glassmark-iconset.icon
         type: file
+    dependencies:
+      - sdk: libsqlite3.tbd
     entitlements:
       path: GlassMark/GlassMark.entitlements
       properties:
