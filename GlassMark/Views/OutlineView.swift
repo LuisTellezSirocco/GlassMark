@@ -8,7 +8,7 @@ struct OutlineView: View {
     @EnvironmentObject private var commandStore: CommandStore
 
     var body: some View {
-        let items = MarkdownOutline.items(from: documentStore.document?.text ?? "")
+        let items = documentStore.outlineItems
         let activeID = activeItemID(in: items)
 
         Group {

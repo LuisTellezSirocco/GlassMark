@@ -48,9 +48,9 @@ final class LineNumberGutterView: NSView {
 
     /// Recomputes the line cache, font and width. Call after the text or the
     /// font size changes.
-    func refresh() {
+    func refresh(lineStarts suppliedLineStarts: [Int]? = nil) {
         guard let textView else { return }
-        lineStarts = LineIndex.lineStarts(in: textView.string as NSString)
+        lineStarts = suppliedLineStarts ?? LineIndex.lineStarts(in: textView.string as NSString)
         labelFont = NSFont.monospacedSystemFont(ofSize: max(9, textSize - 2), weight: .light)
 
         let digits = max(minimumDigits, String(max(lineStarts.count, 1)).count)

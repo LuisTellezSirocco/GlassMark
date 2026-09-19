@@ -104,4 +104,19 @@ final class ChatRepositoryTests: XCTestCase {
         XCTAssertEqual(retried.turns[0].attempts.count, 2)
         XCTAssertEqual(retried.turns[0].attempts.last?.requestedModelID, "gemini-3.8-flash")
     }
+    func testSecondConnectionReportsLockedStorageWithoutWaiting() throws {
+        let url = temporaryURL()
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = try ChatSQLiteConnection(url: url)
+        try withExtendedLifetime(first) {
+            XCTAssertThrowsError(try ChatSQLiteConnection(url: url)) { error in
+                guard case ChatError.storageUnavailable = error else {
+                    return XCTFail("Expected unavailable storage, got \(error)")
+                }
+            }
+        }
+    }
+
 }

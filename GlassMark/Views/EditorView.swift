@@ -135,7 +135,7 @@ private struct EditorStatusBarView: View {
     @EnvironmentObject private var documentStore: DocumentStore
 
     var body: some View {
-        let statistics = DocumentStatistics(text: documentStore.document?.text ?? "")
+        let statistics = documentStore.statistics
 
         HStack(spacing: 10) {
             Text(documentStore.document?.file.relativePath ?? "")
@@ -328,6 +328,8 @@ struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.applyInlineEditConfiguration(self)
         context.coordinator.observeScrolling(of: scrollView)
         context.coordinator.applyHighlighting()
+        context.coordinator.syncedSessionID = documentSessionID
+        context.coordinator.syncedRevision = documentRevision
         return container
     }
 
@@ -359,11 +361,15 @@ struct MarkdownTextView: NSViewRepresentable {
             context.coordinator.applyExternalScroll(toLine: scrollSync.line)
         }
 
-        if !textView.string.isExactlyEqual(to: text) {
-            let selectedRanges = textView.selectedRanges
-            textView.string = text
-            textView.selectedRanges = selectedRanges
-            context.coordinator.applyHighlighting()
+        if context.coordinator.syncedSessionID != documentSessionID || context.coordinator.syncedRevision != documentRevision {
+            context.coordinator.syncedSessionID = documentSessionID
+            context.coordinator.syncedRevision = documentRevision
+            if !textView.string.isExactlyEqual(to: text) {
+                let selectedRanges = textView.selectedRanges
+                textView.string = text
+                textView.selectedRanges = selectedRanges
+                context.coordinator.applyHighlighting()
+            }
         }
 
         if let pendingCommand, context.coordinator.lastHandledCommandID != pendingCommand.id {
@@ -399,6 +405,9 @@ struct MarkdownTextView: NSViewRepresentable {
         var activeLocation: Binding<Int>
         var onScroll: ((Int) -> Void)?
         private var lastPublishedLine = -1
+        var syncedSessionID: UUID?
+        var syncedRevision: UInt64?
+        private var cachedLineStarts = [0]
         weak var textView: NSTextView?
         var lastHandledCommandID: UUID?
         var lastHandledScrollID: UUID?
@@ -494,7 +503,8 @@ struct MarkdownTextView: NSViewRepresentable {
 
         /// Recomputes the gutter's line cache, font and width.
         func refreshGutter() {
-            gutterView?.refresh()
+            if let textView { cachedLineStarts = LineIndex.lineStarts(in: textView.string as NSString) }
+            gutterView?.refresh(lineStarts: cachedLineStarts)
             containerView?.gutterWidthChanged()
         }
 
@@ -507,9 +517,7 @@ struct MarkdownTextView: NSViewRepresentable {
             let containerY = max(0, visibleRect.minY - textView.textContainerInset.height + 1)
             let glyphIndex = layoutManager.glyphIndex(for: NSPoint(x: 0, y: containerY), in: textContainer)
             let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-            let nsString = textView.string as NSString
-            let clamped = min(charIndex, nsString.length)
-            return nsString.substring(to: clamped).reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
+            return LineIndex.lineNumber(forCharacterAt: charIndex, lineStarts: cachedLineStarts) - 1
         }
 
         func applyExternalScroll(toLine line: Int) {
@@ -520,17 +528,8 @@ struct MarkdownTextView: NSViewRepresentable {
             }
         }
 
-        private func characterIndex(forLine line: Int) -> Int {
-            guard let textView else { return 0 }
-            let nsString = textView.string as NSString
-            var charIndex = 0
-            var current = 0
-            while current < line, charIndex < nsString.length {
-                let range = nsString.lineRange(for: NSRange(location: charIndex, length: 0))
-                charIndex = range.location + range.length
-                current += 1
-            }
-            return min(charIndex, nsString.length)
+        func characterIndex(forLine line: Int) -> Int {
+            cachedLineStarts[min(max(0, line), cachedLineStarts.count - 1)]
         }
 
         func textDidChange(_ notification: Notification) {
@@ -565,6 +564,8 @@ struct MarkdownTextView: NSViewRepresentable {
                 applyHighlighting()
                 return
             }
+            // Scroll mapping must reflect edits even while styling is deferred.
+            refreshGutter()
             let workItem = DispatchWorkItem { [weak self] in self?.applyHighlighting() }
             highlightWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)

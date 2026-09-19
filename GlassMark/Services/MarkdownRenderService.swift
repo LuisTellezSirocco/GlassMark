@@ -135,6 +135,19 @@ struct MarkdownRenderService {
 
     private static let script = """
     var suppressScroll = false;
+    var lineElements = [];
+    var lastPublishedLine = -1;
+    // Source blocks are emitted in document order. Read only logarithmically
+    // many live positions, so images/math/resizing cannot stale a geometry cache.
+    function lastMatchingBlock(predicate) {
+      var low = 0, high = lineElements.length - 1, match = -1;
+      while (low <= high) {
+        var middle = (low + high) >> 1;
+        if (predicate(lineElements[middle])) { match = middle; low = middle + 1; }
+        else { high = middle - 1; }
+      }
+      return match >= 0 ? lineElements[match] : null;
+    }
     function setContent(html) {
       var main = document.getElementById('content');
       var doc = document.scrollingElement || document.documentElement;
@@ -142,6 +155,8 @@ struct MarkdownRenderService {
       var ratio = previousMax > 0 ? doc.scrollTop / previousMax : 0;
       suppressScroll = true;
       main.innerHTML = html;
+      lineElements = Array.from(main.querySelectorAll('[data-line]'));
+      lastPublishedLine = -1;
       requestAnimationFrame(function () {
         var newMax = doc.scrollHeight - doc.clientHeight;
         doc.scrollTop = ratio * newMax;
@@ -155,12 +170,9 @@ struct MarkdownRenderService {
     }
     function scrollToLine(line) {
       suppressScroll = true;
-      var els = document.querySelectorAll('[data-line]');
-      var target = null;
-      for (var i = 0; i < els.length; i++) {
-        var l = parseInt(els[i].getAttribute('data-line'), 10);
-        if (l <= line) { target = els[i]; } else { break; }
-      }
+      var target = lastMatchingBlock(function (el) {
+        return parseInt(el.getAttribute('data-line'), 10) <= line;
+      });
       var doc = document.scrollingElement || document.documentElement;
       doc.scrollTop = target ? Math.max(0, absoluteTop(target) - 8) : 0;
       setTimeout(function () { suppressScroll = false; }, 90);
@@ -222,9 +234,13 @@ struct MarkdownRenderService {
           var pre = code.parentElement;
           var holder = document.createElement('div');
           holder.className = 'mermaid';
+          if (pre && pre.hasAttribute('data-line')) {
+            holder.setAttribute('data-line', pre.getAttribute('data-line'));
+          }
           holder.textContent = code.textContent;
           if (pre && pre.parentNode) { pre.parentNode.replaceChild(holder, pre); }
         });
+        lineElements = Array.from(content.querySelectorAll('[data-line]'));
         try { window.mermaid.run({ querySelector: '#content .mermaid' }); } catch (e) {}
       });
     }
@@ -232,13 +248,10 @@ struct MarkdownRenderService {
       if (suppressScroll) return;
       var doc = document.scrollingElement || document.documentElement;
       var top = doc.scrollTop;
-      var els = document.querySelectorAll('[data-line]');
-      var line = 0;
-      for (var i = 0; i < els.length; i++) {
-        if (absoluteTop(els[i]) <= top + 1) {
-          line = parseInt(els[i].getAttribute('data-line'), 10);
-        } else { break; }
-      }
+      var target = lastMatchingBlock(function (el) { return absoluteTop(el) <= top + 1; });
+      var line = target ? parseInt(target.getAttribute('data-line'), 10) : 0;
+      if (line === lastPublishedLine) return;
+      lastPublishedLine = line;
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.glassmarkScroll) {
         window.webkit.messageHandlers.glassmarkScroll.postMessage(line);
       }

@@ -140,4 +140,27 @@ final class DocumentStoreTests: XCTestCase {
         XCTAssertEqual(store.document?.sessionID, session)
         XCTAssertEqual(store.document?.revision, revision)
     }
+    func testAnalysisTracksEditsTabSwitchesAndReopenedFiles() throws {
+        let store = DocumentStore()
+        let workspace = makeWorkspace()
+        let first = try makeFile("first.md", contents: "# First\nbody")
+        let second = try makeFile("second.md", contents: "# Second")
+        store.open(first, workspace: workspace)
+        XCTAssertEqual(store.outlineItems.map(\.title), ["First"])
+        XCTAssertEqual(store.statistics.words, 3)
+        store.updateText("# Edited\nmore words here")
+        XCTAssertEqual(store.outlineItems.map(\.title), ["Edited"])
+        XCTAssertEqual(store.statistics.words, 5)
+        store.open(second, workspace: workspace)
+        XCTAssertEqual(store.outlineItems.map(\.title), ["Second"])
+        store.selectDocument(id: first.id)
+        XCTAssertEqual(store.outlineItems.map(\.title), ["Edited"])
+        XCTAssertEqual(store.statistics.words, 5)
+        store.closeDocument(id: first.id)
+        try "# Reopened".write(to: first.url, atomically: true, encoding: .utf8)
+        store.open(first, workspace: workspace)
+        XCTAssertEqual(store.outlineItems.map(\.title), ["Reopened"])
+        XCTAssertEqual(store.statistics.words, 2)
+    }
+
 }

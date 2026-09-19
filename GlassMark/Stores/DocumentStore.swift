@@ -19,6 +19,31 @@ final class DocumentStore: ObservableObject {
     private var autosaveWorkItem: DispatchWorkItem?
     private let sessionDefaultsPrefix = "session."
 
+    private struct Analysis {
+        let revision: UInt64
+        let outline: [MarkdownOutlineItem]
+        let statistics: DocumentStatistics
+    }
+    private var analysisCache: [UUID: Analysis] = [:]
+
+    // Scroll and save-state updates must not reparse the document. Keep a small
+    // cache so returning to a recent tab also reuses its analysis.
+    private var analysis: Analysis? {
+        guard let document else { return nil }
+        if let cached = analysisCache[document.sessionID], cached.revision == document.revision {
+            return cached
+        }
+        let result = Analysis(revision: document.revision,
+                              outline: MarkdownOutline.items(from: document.text),
+                              statistics: DocumentStatistics(text: document.text))
+        if analysisCache.count >= 16 { analysisCache.removeAll(keepingCapacity: true) }
+        analysisCache[document.sessionID] = result
+        return result
+    }
+
+    var outlineItems: [MarkdownOutlineItem] { analysis?.outline ?? [] }
+    var statistics: DocumentStatistics { analysis?.statistics ?? DocumentStatistics(text: "") }
+
     var canSave: Bool {
         document?.isDirty == true
     }
@@ -102,7 +127,8 @@ final class DocumentStore: ObservableObject {
     }
 
     func selectDocument(id: EditorDocument.ID) {
-        guard let selectedDocument = openDocuments.first(where: { $0.id == id }) else { return }
+        guard document?.id != id,
+              let selectedDocument = openDocuments.first(where: { $0.id == id }) else { return }
 
         selectedDocumentIDByWorkspaceID[selectedDocument.workspaceID] = selectedDocument.id
         document = selectedDocument

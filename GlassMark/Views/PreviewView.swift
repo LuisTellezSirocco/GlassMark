@@ -13,6 +13,8 @@ struct PreviewView: View {
         if let document = documentStore.document {
             WebPreview(
                 markdown: document.text,
+                sessionID: document.sessionID,
+                revision: document.revision,
                 title: document.file.name,
                 baseURL: document.file.url.deletingLastPathComponent(),
                 scopeURL: document.workspaceRootURL,
@@ -33,6 +35,8 @@ struct PreviewView: View {
 /// smooth and the scroll position is preserved between updates.
 private struct WebPreview: NSViewRepresentable {
     let markdown: String
+    let sessionID: UUID
+    let revision: UInt64
     let title: String
     let baseURL: URL
     let scopeURL: URL
@@ -70,7 +74,7 @@ private struct WebPreview: NSViewRepresentable {
             baseURL: URL(string: "\(AssetSchemeHandler.scheme)://app/")
         )
         context.coordinator.applyTheme(themeCSS)
-        context.coordinator.scheduleRender(markdown: markdown)
+        context.coordinator.scheduleRender(markdown: markdown, sessionID: sessionID, revision: revision)
         return webView
     }
 
@@ -81,7 +85,7 @@ private struct WebPreview: NSViewRepresentable {
         if abs(webView.pageZoom - CGFloat(pageZoom)) > 0.0001 {
             webView.pageZoom = CGFloat(pageZoom)
         }
-        context.coordinator.scheduleRender(markdown: markdown)
+        context.coordinator.scheduleRender(markdown: markdown, sessionID: sessionID, revision: revision)
         context.coordinator.handleScroll(request: scrollRequest)
         context.coordinator.handleScrollSync(scrollSync)
     }
@@ -93,7 +97,9 @@ private struct WebPreview: NSViewRepresentable {
         private let renderService: MarkdownRenderService
         private var isShellLoaded = false
         private var pendingMarkdown: String?
-        private var latestMarkdown: String = ""
+        private var latestSessionID: UUID?
+        private var latestRevision: UInt64?
+        private var renderGeneration = 0
         private var renderWorkItem: DispatchWorkItem?
         private var lastHandledScrollID: UUID?
         private var lastHandledSyncToken: Int?
@@ -145,9 +151,14 @@ private struct WebPreview: NSViewRepresentable {
             }
         }
 
-        func scheduleRender(markdown: String) {
-            guard markdown != latestMarkdown else { return }
-            latestMarkdown = markdown
+        func scheduleRender(markdown: String, sessionID: UUID, revision: UInt64) {
+            guard sessionID != latestSessionID || revision != latestRevision else { return }
+            let switchingDocument = sessionID != latestSessionID
+            latestSessionID = sessionID
+            latestRevision = revision
+            renderGeneration += 1
+            let generation = renderGeneration
+            pendingMarkdown = nil
 
             renderWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
@@ -156,12 +167,17 @@ private struct WebPreview: NSViewRepresentable {
                 DispatchQueue.global(qos: .userInitiated).async {
                     let body = service.renderPreviewBody(markdown: markdown)
                     DispatchQueue.main.async {
+                        guard self.renderGeneration == generation else { return }
                         self.apply(body: body)
                     }
                 }
             }
             renderWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+            if switchingDocument {
+                DispatchQueue.main.async(execute: workItem)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+            }
         }
 
         private func apply(body: String) {

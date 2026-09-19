@@ -1,4 +1,5 @@
 import XCTest
+import JavaScriptCore
 @testable import GlassMark
 
 final class MarkdownRenderServiceTests: XCTestCase {
@@ -68,4 +69,40 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(combined.contains("#1e1e1e"))
         XCTAssertTrue(combined.contains("p { color: red; }"))
     }
+    func testPreviewScrollSearchUsesLiveGeometryAndLogarithmicLookups() throws {
+        let shell = service.documentShell(title: "Test")
+        let start = try XCTUnwrap(shell.range(of: "<script>"))
+        let end = try XCTUnwrap(shell.range(of: "</script>", range: start.upperBound..<shell.endIndex))
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript("""
+        var scrollHandler, reads = 0, shift = 0, messages = [];
+        var document = { scrollingElement: { scrollTop: 90000 } };
+        var window = {
+          addEventListener: function (_, handler) { scrollHandler = handler; },
+          webkit: { messageHandlers: { glassmarkScroll: {
+            postMessage: function (line) { messages.push(line); }
+          } } }
+        };
+        """)
+        context.evaluateScript(String(shell[start.upperBound..<end.lowerBound]))
+        context.evaluateScript("""
+        lineElements = Array.from({length: 10000}, function (_, i) {
+          return {
+            getAttribute: function () { return String(i); },
+            getBoundingClientRect: function () {
+              reads++;
+              return { top: i * 10 + shift - document.scrollingElement.scrollTop };
+            }
+          };
+        });
+        scrollHandler();
+        """)
+        XCTAssertNil(context.exception)
+        XCTAssertEqual(context.evaluateScript("messages[0]")?.toInt32(), 9000)
+        XCTAssertLessThanOrEqual(context.evaluateScript("reads")?.toInt32() ?? 999, 15)
+        context.evaluateScript("scrollHandler(); shift = 100; scrollHandler();")
+        XCTAssertEqual(context.evaluateScript("messages.length")?.toInt32(), 2)
+        XCTAssertEqual(context.evaluateScript("messages[1]")?.toInt32(), 8990)
+    }
+
 }

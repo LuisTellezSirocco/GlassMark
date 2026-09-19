@@ -122,7 +122,9 @@ final class ChatSQLiteConnection {
 
     init(url: URL) throws {
         let lockURL = URL(fileURLWithPath: url.path + ".lock")
-        let descriptor = Darwin.open(lockURL.path, O_CREAT | O_RDWR | O_EXLOCK, 0o600)
+        // A second app/test process must report unavailable storage instead of
+        // blocking the main thread indefinitely during application startup.
+        let descriptor = Darwin.open(lockURL.path, O_CREAT | O_RDWR | O_EXLOCK | O_NONBLOCK, 0o600)
         guard descriptor >= 0 else {
             throw ChatError.storageUnavailable("Another GlassMark process is using Copilot chat storage")
         }

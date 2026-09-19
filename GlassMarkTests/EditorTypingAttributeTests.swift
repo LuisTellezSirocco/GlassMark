@@ -68,4 +68,16 @@ final class EditorTypingAttributeTests: XCTestCase {
         XCTAssertTrue(font?.isFixedPitch ?? false)
         XCTAssertEqual(boundText, "plain text")
     }
+    func testScrollLineIndexUpdatesBeforeDeferredHighlighting() {
+        textView.string = "😀\n" + String(repeating: "long line\n", count: 12_000)
+        coordinator.textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+        XCTAssertEqual(coordinator.characterIndex(forLine: 1), 3)
+        XCTAssertEqual(coordinator.characterIndex(forLine: 12_001), textView.string.utf16.count)
+        textView.string = "short\n"
+        coordinator.textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+        XCTAssertEqual(coordinator.characterIndex(forLine: 1), 6)
+        XCTAssertEqual(coordinator.characterIndex(forLine: 99), 6)
+        XCTAssertEqual(coordinator.characterIndex(forLine: -1), 0)
+    }
+
 }
