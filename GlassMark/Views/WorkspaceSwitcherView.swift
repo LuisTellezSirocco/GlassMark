@@ -20,6 +20,16 @@ struct WorkspaceSwitcherView: View {
                 Spacer()
 
                 Button {
+                    workspaceStore.refreshFileTree()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(workspaceStore.activeWorkspace == nil)
+                .help("Refresh Workspace (⌘R)")
+                .accessibilityLabel("Refresh Workspace")
+
+                Button {
                     workspaceStore.presentWorkspacePicker()
                 } label: {
                     Image(systemName: "folder.badge.plus")
