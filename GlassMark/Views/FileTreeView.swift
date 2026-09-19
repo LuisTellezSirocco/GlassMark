@@ -42,6 +42,7 @@ struct FileTreeView: View {
     let canPaste: Bool
     let onDuplicate: (WorkspaceFile) -> Void
     let onRevealInFinder: (WorkspaceFile) -> Void
+    let onCopyPath: (WorkspaceFile) -> Void
     let onMoveToTrash: (WorkspaceFile) -> Void
     let onMove: (WorkspaceFile, WorkspaceFile) -> Void
     /// Drops on the empty area below the tree move the file to the workspace
@@ -70,6 +71,7 @@ struct FileTreeView: View {
                     canPaste: canPaste,
                     onDuplicate: onDuplicate,
                     onRevealInFinder: onRevealInFinder,
+                    onCopyPath: onCopyPath,
                     onMoveToTrash: onMoveToTrash,
                     onMove: onMove
                 )
@@ -138,6 +140,7 @@ private struct FileTreeNodeView: View {
     let canPaste: Bool
     let onDuplicate: (WorkspaceFile) -> Void
     let onRevealInFinder: (WorkspaceFile) -> Void
+    let onCopyPath: (WorkspaceFile) -> Void
     let onMoveToTrash: (WorkspaceFile) -> Void
     let onMove: (WorkspaceFile, WorkspaceFile) -> Void
 
@@ -166,6 +169,7 @@ private struct FileTreeNodeView: View {
                             canPaste: canPaste,
                             onDuplicate: onDuplicate,
                             onRevealInFinder: onRevealInFinder,
+                            onCopyPath: onCopyPath,
                             onMoveToTrash: onMoveToTrash,
                             onMove: onMove
                         )
@@ -196,6 +200,7 @@ private struct FileTreeNodeView: View {
                 canPaste: canPaste,
                 onDuplicate: onDuplicate,
                 onRevealInFinder: onRevealInFinder,
+                onCopyPath: onCopyPath,
                 onMoveToTrash: onMoveToTrash
             )
         } else {
@@ -217,6 +222,7 @@ private struct FileTreeNodeView: View {
                     canPaste: canPaste,
                     onDuplicate: onDuplicate,
                     onRevealInFinder: onRevealInFinder,
+                    onCopyPath: onCopyPath,
                     onMoveToTrash: onMoveToTrash
                 )
         }
@@ -364,6 +370,7 @@ private extension View {
         canPaste: Bool,
         onDuplicate: @escaping (WorkspaceFile) -> Void,
         onRevealInFinder: @escaping (WorkspaceFile) -> Void,
+        onCopyPath: @escaping (WorkspaceFile) -> Void,
         onMoveToTrash: @escaping (WorkspaceFile) -> Void
     ) -> some View {
         self
@@ -419,6 +426,10 @@ private extension View {
 
                 Button("Reveal in Finder") {
                     onRevealInFinder(file)
+                }
+
+                Button("Copy Path") {
+                    onCopyPath(file)
                 }
 
                 Divider()

@@ -85,6 +85,9 @@ struct SidebarView: View {
                         onRevealInFinder: { file in
                             workspaceStore.revealInFinder(file)
                         },
+                        onCopyPath: { file in
+                            workspaceStore.copyPath(file)
+                        },
                         onMoveToTrash: { file in
                             filePendingTrash = file
                         },

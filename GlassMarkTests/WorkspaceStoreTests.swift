@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import GlassMark
 
@@ -97,5 +98,18 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertNil(store.pendingRenameFile)
         XCTAssertEqual(store.pendingRenameText, "")
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testCopyPathCopiesFullPathToPasteboard() throws {
+        let nestedDirectory = root.appendingPathComponent("projects")
+        try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
+        let fileURL = nestedDirectory.appendingPathComponent("note.md")
+        try "# Note".write(to: fileURL, atomically: true, encoding: .utf8)
+        let file = WorkspaceFile(url: fileURL, rootURL: root, kind: .markdown)
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("GlassMarkTests-\(UUID().uuidString)"))
+        store.copyPath(file, pasteboard: pasteboard)
+
+        XCTAssertEqual(pasteboard.string(forType: .string), fileURL.path(percentEncoded: false))
     }
 }

@@ -278,6 +278,13 @@ final class WorkspaceStore: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([file.url])
     }
 
+    /// Copies the item's full path to the pasteboard. The pasteboard parameter
+    /// lets tests use a scratch pasteboard instead of the user's clipboard.
+    func copyPath(_ file: WorkspaceFile, pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        pasteboard.setString(file.url.path(percentEncoded: false), forType: .string)
+    }
+
     func moveToTrash(_ file: WorkspaceFile) {
         guard let activeWorkspace else { return }
 
