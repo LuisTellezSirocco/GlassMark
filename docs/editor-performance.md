@@ -123,6 +123,44 @@ the report captured before this follow-up; excluding preferences alone does not
 isolate it, as a later run reached the preview suite before crashing. These runs
 are not claimed as passing.
 
+## Follow-up: sidebar note selection
+
+File rows registered both single- and double-click gestures, even though both
+opened the same note. SwiftUI waited for the double-click interval before
+delivering the single-click action. This introduced a nearly fixed delay even
+when switching between notes already open in the editor.
+
+Each row now registers one gesture: a single click for files, a double click
+for folders. Folder disclosure controls retain their existing behavior.
+
+On September 19, 2026, six sidebar switches across the same four already-open
+notes (approximately 3,800–16,000 characters) were measured before and after,
+with identical settings and window geometry within each build configuration:
+
+| Build | Before, median (range) | After, median (range) |
+| --- | ---: | ---: |
+| Debug | 403.5 ms (378–410 ms) | 32 ms (16–38 ms) |
+| Release | 381.5 ms (372–390 ms) | 23.5 ms (21–35 ms) |
+
+The measured interval starts at an AppKit local `leftMouseUp` event monitor and
+ends immediately after text replacement and synchronous highlighting in
+`MarkdownTextView.updateNSView`. Temporary unified-log markers recorded each
+endpoint; the editor marker was paired with the most recent mouse-up from the
+same process. The instrumentation was removed after measurement. To reproduce,
+instrument these endpoints, switch through four distinct open notes and then
+repeat the first two, keeping the notes, settings, click interval and build
+configuration identical between versions. Capture real pointer events rather
+than invoking selection callbacks directly, which bypasses gesture recognition.
+
+These measurements include gesture dispatch and editor work before that endpoint,
+but do not measure final screen presentation, preview completion, cold disk reads
+or very large notes. Folder collapse/expansion by double click was also verified
+in the running app.
+
+The final Debug test build passed all 13 tests in `DocumentStoreTests` and
+`FileTreeDragTests`; the final Release build also succeeded. The full suite was
+not rerun for this gesture-only change.
+
 ## Remaining profiling targets
 
 Initial file reads, saves and session restoration still perform file I/O on the

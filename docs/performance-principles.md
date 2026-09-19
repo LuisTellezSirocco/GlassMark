@@ -33,6 +33,9 @@ sin perder corrección. No añadas complejidad por una mejora meramente supuesta
 - Usa debounce para trabajo diferible, no para ocultar un algoritmo lento ni
   retrasar acciones explícitas como seleccionar una nota. La escritura debe
   mantener los atributos tipográficos correctos desde la inserción.
+- Evita gestos de clic y doble clic en competencia cuando ambos hacen lo mismo:
+  el clic puede esperar todo el intervalo de doble clic. Mide desde el evento de
+  entrada, no solo desde el callback, para detectar esas esperas.
 - Si cambias guardado o carga a segundo plano, conserva el orden de escritura,
   el acceso de seguridad al archivo y los cambios realizados durante la operación.
   Un guardado antiguo no puede marcar como guardada una revisión más reciente.

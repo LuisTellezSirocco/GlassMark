@@ -232,15 +232,12 @@ private struct FileTreeNodeView: View {
         FileRow(file: file, isSelected: file.id == selectedFileID, isDropTargeted: isDropTargeted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
+            // Competing single/double taps delay file selection until the
+            // double-click interval expires. Only folders need a double click.
+            .onTapGesture(count: file.isDirectory ? 2 : 1) {
                 if file.isDirectory {
                     toggleExpanded()
                 } else if file.isEditable {
-                    onSelect(file)
-                }
-            }
-            .onTapGesture {
-                if file.isEditable {
                     onSelect(file)
                 }
             }
