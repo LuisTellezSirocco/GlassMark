@@ -208,6 +208,8 @@ private struct EditorFormattingToolbarView: View {
             .padding(.vertical, 7)
         }
         .scrollIndicators(.hidden)
+        // Keep the formatting strip at its intrinsic height above the editor.
+        .fixedSize(horizontal: false, vertical: true)
         .background(.bar)
     }
 

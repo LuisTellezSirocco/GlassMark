@@ -268,6 +268,8 @@ private struct DocumentTabBarView: View {
             .padding(.vertical, 7)
         }
         .scrollIndicators(.hidden)
+        // This horizontal strip must take only its content's height.
+        .fixedSize(horizontal: false, vertical: true)
         .background(.bar)
         .alert("Close Unsaved File?", isPresented: pendingCloseBinding, presenting: pendingCloseDocument) { document in
             Button("Close Without Saving", role: .destructive) {
