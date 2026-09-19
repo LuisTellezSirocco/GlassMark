@@ -15,6 +15,86 @@ enum MarkdownTokenStyle: Equatable {
     case delimiter
 }
 
+/// Retains line tokens and fence state. A local edit only reparses changed lines
+/// and any following lines whose fenced-code context changed.
+struct MarkdownHighlightCache {
+    struct Update {
+        let range: NSRange
+        let tokens: [MarkdownToken]
+        let lineStarts: [Int]
+        let parsedLineCount: Int
+    }
+
+    private struct Line {
+        let text: String
+        let incomingFence: Character?
+        let outgoingFence: Character?
+        let tokens: [MarkdownToken]
+    }
+
+    private var lines: [Line] = []
+    private let highlighter = MarkdownSyntaxHighlighter()
+
+    mutating func update(_ text: String, forceFull: Bool = false) -> Update {
+        let source = text.components(separatedBy: "\n")
+        var prefix = 0
+        while prefix < min(source.count, lines.count), source[prefix].utf16.elementsEqual(lines[prefix].text.utf16) {
+            prefix += 1
+        }
+        var suffix = 0
+        while suffix < min(source.count, lines.count) - prefix,
+              source[source.count - suffix - 1].utf16.elementsEqual(lines[lines.count - suffix - 1].text.utf16) {
+            suffix += 1
+        }
+
+        var updated: [Line] = []
+        updated.reserveCapacity(source.count)
+        var starts: [Int] = []
+        starts.reserveCapacity(source.count)
+        var offset = 0
+        var fence: Character?
+        var parsed = 0
+        // Include the preceding newline: inserted text can inherit its styling.
+        let firstChanged = max(0, prefix - 1)
+        var endChanged = min(source.count, max(firstChanged + 1, source.count - suffix))
+
+        for (index, line) in source.enumerated() {
+            starts.append(offset)
+            offset += line.utf16.count + 1
+            let oldIndex: Int? = index < prefix ? index
+                : (index >= source.count - suffix ? index + lines.count - source.count : nil)
+            if let oldIndex, lines[oldIndex].incomingFence == fence {
+                let cached = lines[oldIndex]
+                updated.append(cached)
+                fence = cached.outgoingFence
+            } else {
+                let incoming = fence
+                let tokens = highlighter.tokens(inLine: line, openFence: &fence)
+                updated.append(Line(text: line, incomingFence: incoming, outgoingFence: fence, tokens: tokens))
+                parsed += 1
+                endChanged = max(endChanged, index + 1)
+            }
+        }
+        let unchanged = prefix == source.count && source.count == lines.count
+        lines = updated
+        let lower = forceFull ? 0 : firstChanged
+        let upper = forceFull ? lines.count : endChanged
+        let totalLength = offset - 1
+        let end = upper < starts.count ? starts[upper] : totalLength
+        let range = !forceFull && unchanged ? NSRange(location: 0, length: 0)
+            : NSRange(location: starts[lower], length: end - starts[lower])
+        var tokens: [MarkdownToken] = []
+        if range.length > 0 {
+            for index in lower..<upper {
+                tokens.append(contentsOf: lines[index].tokens.map {
+                    MarkdownToken(range: NSRange(location: starts[index] + $0.range.location, length: $0.range.length), style: $0.style)
+                })
+            }
+        }
+        return Update(range: range, tokens: tokens, lineStarts: starts, parsedLineCount: parsed)
+    }
+}
+
 struct MarkdownToken: Equatable {
     let range: NSRange
     let style: MarkdownTokenStyle
@@ -24,44 +104,37 @@ struct MarkdownToken: Equatable {
 /// highlighting. Ranges are UTF-16 offsets compatible with `NSTextStorage`.
 struct MarkdownSyntaxHighlighter {
     func tokens(in text: String) -> [MarkdownToken] {
-        let nsText = text as NSString
         var tokens: [MarkdownToken] = []
         var offset = 0
-        var insideFence = false
-        var openFenceCharacter: Character = "`"
+        var openFence: Character?
 
-        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let lines = text.components(separatedBy: "\n")
         for line in lines {
-            let lineLength = (line as NSString).length
-            let lineRange = NSRange(location: offset, length: lineLength)
-
-            if let fence = fenceCharacter(of: line) {
-                tokens.append(MarkdownToken(range: lineRange, style: .codeBlock))
-                if insideFence {
-                    if fence == openFenceCharacter { insideFence = false }
-                } else {
-                    insideFence = true
-                    openFenceCharacter = fence
-                }
-                offset += lineLength + 1
-                continue
-            }
-
-            if insideFence {
-                tokens.append(MarkdownToken(range: lineRange, style: .codeBlock))
-                offset += lineLength + 1
-                continue
-            }
-
-            appendBlockTokens(line: line, lineStart: offset, into: &tokens)
-            appendInlineTokens(line: line, lineStart: offset, into: &tokens)
-
-            offset += lineLength + 1
+            tokens.append(contentsOf: self.tokens(inLine: line, openFence: &openFence).map {
+                MarkdownToken(range: NSRange(location: offset + $0.range.location, length: $0.range.length), style: $0.style)
+            })
+            offset += line.utf16.count + 1
         }
+        return tokens
+    }
 
-        // Keep ranges within bounds in case of trailing-newline arithmetic.
-        let total = nsText.length
-        return tokens.filter { $0.range.location + $0.range.length <= total }
+    /// Relative ranges allow unchanged lines to survive edits earlier in the note.
+    fileprivate func tokens(inLine rawLine: String, openFence: inout Character?) -> [MarkdownToken] {
+        let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
+        let lineRange = NSRange(location: 0, length: line.utf16.count)
+        if let fence = fenceCharacter(of: line) {
+            if let current = openFence {
+                if fence == current { openFence = nil }
+            } else {
+                openFence = fence
+            }
+            return [MarkdownToken(range: lineRange, style: .codeBlock)]
+        }
+        if openFence != nil { return [MarkdownToken(range: lineRange, style: .codeBlock)] }
+        var tokens: [MarkdownToken] = []
+        appendBlockTokens(line: line, lineStart: 0, into: &tokens)
+        appendInlineTokens(line: line, lineStart: 0, into: &tokens)
+        return tokens
     }
 
     private func fenceCharacter(of line: String) -> Character? {

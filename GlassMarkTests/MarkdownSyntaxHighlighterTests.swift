@@ -61,4 +61,45 @@ final class MarkdownSyntaxHighlighterTests: XCTestCase {
             XCTAssertLessThanOrEqual(token.range.location + token.range.length, length)
         }
     }
+
+    func testCRLFOffsetsReferToOriginalText() {
+        let text = "body\r\n😀 `code`\r\n# Title"
+        let tokens = highlighter.tokens(in: text)
+        XCTAssertEqual(tokens.first(where: { $0.style == .inlineCode })?.range,
+                       (text as NSString).range(of: "`code`"))
+        XCTAssertEqual(tokens.first(where: { $0.style == .heading(level: 1) })?.range,
+                       (text as NSString).range(of: "# Title"))
+    }
+
+    func testIncrementalHighlightingOnlyParsesEditedLine() {
+        var cache = MarkdownHighlightCache()
+        let text = String(repeating: "**bold** and `code`\n", count: 4_000)
+        _ = cache.update(text)
+        let edited = "new line\n" + text
+        let update = cache.update(edited)
+        XCTAssertEqual(update.parsedLineCount, 1)
+        XCTAssertEqual(update.range, NSRange(location: 0, length: 9))
+        XCTAssertEqual(update.lineStarts, LineIndex.lineStarts(in: edited as NSString))
+        XCTAssertEqual(cache.update(edited, forceFull: true).tokens, highlighter.tokens(in: edited))
+    }
+
+    func testIncrementalHighlightingTracksFenceChangesAndUnicodeEdits() {
+        var cache = MarkdownHighlightCache()
+        let versions = [
+            "# Title\n```\n**code**\n```\n😀 _tail_\n",
+            "# Title\n\n**code**\n```\n😀 _tail_\n",
+            "# Title\n\n**code**\n\n😀 _tail_\n",
+            "# Title\r\n~~~\r\n**code**\r\n~~~\r\n😀 _tail_\r\n",
+            "# Title\r\n😀 _tail_\r\n",
+            "# Title\r\n😀 _taíl_\r\n",
+            "# Title\r\n😀 _tai\u{301}l_\r\n",
+            "", "**bold**", "plain"
+        ]
+        for text in versions {
+            _ = cache.update(text)
+            let full = cache.update(text, forceFull: true)
+            XCTAssertEqual(full.tokens, highlighter.tokens(in: text), text)
+            XCTAssertEqual(full.lineStarts, LineIndex.lineStarts(in: text as NSString))
+        }
+    }
 }

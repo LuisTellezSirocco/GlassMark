@@ -51,4 +51,27 @@ final class WorkspaceFileTests: XCTestCase {
         XCTAssertEqual(FileType(url: URL(fileURLWithPath: "/x/a.png"))?.workspaceKind, .other)
         XCTAssertFalse(FileType(url: URL(fileURLWithPath: "/x/a.png"))?.shouldShowInSidebar ?? true)
     }
+
+    func testSearchIndexSortsNestedFilesAndMatchesAllTerms() {
+        let children = ["note10.md", "note2.md", "Other.txt"].map {
+            WorkspaceFile(url: root.appendingPathComponent("docs/\($0)"), rootURL: root, kind: .markdown)
+        }
+        let folder = WorkspaceFile(url: root.appendingPathComponent("docs"), rootURL: root, kind: .folder, children: children)
+        let image = WorkspaceFile(url: root.appendingPathComponent("image.png"), rootURL: root, kind: .other)
+        let index = WorkspaceSearchIndex(files: [folder, image])
+        XCTAssertEqual(index.results(for: "  ").map(\.name), ["note2.md", "note10.md", "Other.txt"])
+        XCTAssertEqual(index.results(for: "DOCS  NOTE2").map(\.name), ["note2.md"])
+        XCTAssertTrue(index.results(for: "absent").isEmpty)
+        XCTAssertTrue(index.results(for: "image").isEmpty)
+    }
+
+    func testSearchIndexCapsResults() {
+        let files = (0..<100).map {
+            WorkspaceFile(url: root.appendingPathComponent("note\($0).md"), rootURL: root, kind: .markdown)
+        }
+        let index = WorkspaceSearchIndex(files: files)
+        XCTAssertEqual(index.results(for: "").count, 30)
+        XCTAssertEqual(index.results(for: "note").count, 40)
+        XCTAssertEqual(index.results(for: "note99").first?.name, "note99.md")
+    }
 }

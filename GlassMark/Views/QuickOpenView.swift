@@ -6,33 +6,11 @@ struct QuickOpenView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+    @State private var searchIndex = WorkspaceSearchIndex(files: [])
     @FocusState private var isSearchFocused: Bool
 
-    private var searchableFiles: [WorkspaceFile] {
-        files.flattenedEditableFiles()
-    }
-
-    private var results: [WorkspaceFile] {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else {
-            return Array(searchableFiles.prefix(30))
-        }
-
-        let terms = trimmedQuery
-            .lowercased()
-            .split(separator: " ")
-            .map(String.init)
-
-        return searchableFiles
-            .filter { file in
-                let haystack = "\(file.name) \(file.relativePath)".lowercased()
-                return terms.allSatisfy { haystack.contains($0) }
-            }
-            .prefix(40)
-            .map { $0 }
-    }
-
     var body: some View {
+        let results = searchIndex.results(for: query)
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
@@ -80,30 +58,18 @@ struct QuickOpenView: View {
         .onAppear {
             isSearchFocused = true
         }
+        .onChange(of: files, initial: true) { _, files in
+            searchIndex = WorkspaceSearchIndex(files: files)
+        }
     }
 
     private func openFirstResult() {
-        guard let firstResult = results.first else { return }
+        guard let firstResult = searchIndex.results(for: query).first else { return }
         open(firstResult)
     }
 
     private func open(_ file: WorkspaceFile) {
         onOpen(file)
         dismiss()
-    }
-}
-
-private extension Array where Element == WorkspaceFile {
-    func flattenedEditableFiles() -> [WorkspaceFile] {
-        flatMap { file -> [WorkspaceFile] in
-            var files: [WorkspaceFile] = file.isEditable ? [file] : []
-            if let children = file.children {
-                files.append(contentsOf: children.flattenedEditableFiles())
-            }
-            return files
-        }
-        .sorted {
-            $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
-        }
     }
 }

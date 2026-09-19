@@ -440,7 +440,7 @@ struct MarkdownTextView: NSViewRepresentable {
         private var anchorWorkItem: DispatchWorkItem?
         private var isApplyingInlineReplacement = false
 
-        private let highlighter = MarkdownSyntaxHighlighter()
+        private var highlightCache = MarkdownHighlightCache()
         private var fontSize = CGFloat(DocumentTextSize.defaultSize)
         private var logicalLineSpacing = CGFloat(DocumentLogicalLineSpacing.defaultValue)
         private var baseFont: NSFont {
@@ -502,8 +502,12 @@ struct MarkdownTextView: NSViewRepresentable {
         }
 
         /// Recomputes the gutter's line cache, font and width.
-        func refreshGutter() {
-            if let textView { cachedLineStarts = LineIndex.lineStarts(in: textView.string as NSString) }
+        func refreshGutter(lineStarts: [Int]? = nil) {
+            if let lineStarts {
+                cachedLineStarts = lineStarts
+            } else if let textView {
+                cachedLineStarts = LineIndex.lineStarts(in: textView.string as NSString)
+            }
             gutterView?.refresh(lineStarts: cachedLineStarts)
             containerView?.gutterWidthChanged()
         }
@@ -561,12 +565,12 @@ struct MarkdownTextView: NSViewRepresentable {
             highlightWorkItem?.cancel()
             let length = textView?.textStorage?.length ?? 0
             if length <= Self.synchronousHighlightLimit {
-                applyHighlighting()
+                applyHighlighting(incremental: true)
                 return
             }
             // Scroll mapping must reflect edits even while styling is deferred.
             refreshGutter()
-            let workItem = DispatchWorkItem { [weak self] in self?.applyHighlighting() }
+            let workItem = DispatchWorkItem { [weak self] in self?.applyHighlighting(incremental: true) }
             highlightWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
         }
@@ -1265,11 +1269,18 @@ struct MarkdownTextView: NSViewRepresentable {
 
         // MARK: - Highlighting
 
-        func applyHighlighting() {
+        func applyHighlighting(incremental: Bool = false) {
             guard let textView, let textStorage = textView.textStorage else { return }
             guard !textView.hasMarkedText() else { return }
 
             let fullRange = NSRange(location: 0, length: textStorage.length)
+            let update: MarkdownHighlightCache.Update?
+            if textStorage.length <= 200_000 {
+                update = highlightCache.update(textView.string, forceFull: !incremental || focusMode)
+            } else {
+                highlightCache = MarkdownHighlightCache()
+                update = nil
+            }
             textStorage.beginEditing()
             let paragraphStyle = baseParagraphStyle
             textStorage.setAttributes(
@@ -1278,12 +1289,12 @@ struct MarkdownTextView: NSViewRepresentable {
                     .foregroundColor: NSColor.textColor,
                     .paragraphStyle: paragraphStyle
                 ],
-                range: fullRange
+                range: update?.range ?? fullRange
             )
 
             // Skip detailed highlighting for very large documents to stay responsive.
-            if textStorage.length <= 200_000 {
-                for token in highlighter.tokens(in: textView.string) {
+            if let update {
+                for token in update.tokens {
                     guard token.range.location + token.range.length <= textStorage.length else { continue }
                     apply(token, to: textStorage)
                 }
@@ -1296,7 +1307,7 @@ struct MarkdownTextView: NSViewRepresentable {
             textStorage.endEditing()
             syncTypingAttributes()
             // The text (or its metrics) may have shifted the logical lines.
-            refreshGutter()
+            refreshGutter(lineStarts: update?.lineStarts)
         }
 
         /// Keeps the insertion font in sync with the highlighted text so newly typed

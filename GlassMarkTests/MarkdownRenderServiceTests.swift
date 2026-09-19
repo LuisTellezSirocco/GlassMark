@@ -1,5 +1,6 @@
 import XCTest
 import JavaScriptCore
+import WebKit
 @testable import GlassMark
 
 final class MarkdownRenderServiceTests: XCTestCase {
@@ -105,4 +106,106 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("messages[1]")?.toInt32(), 8990)
     }
 
+}
+
+@MainActor
+final class PreviewDOMPerformanceTests: XCTestCase, WKNavigationDelegate {
+    private var navigationFinished: XCTestExpectation?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        navigationFinished?.fulfill()
+    }
+
+    private func makePreview() async throws -> WKWebView {
+        let shell = MarkdownRenderService().documentShell(title: "Test")
+        let start = try XCTUnwrap(shell.range(of: "<script>"))
+        let end = try XCTUnwrap(shell.range(of: "</script>", range: start.upperBound..<shell.endIndex))
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        webView.navigationDelegate = self
+        let finished = expectation(description: "Preview shell loaded")
+        navigationFinished = finished
+        // Exercise the real WebKit DOM with deterministic, instrumented rich
+        // renderers. No network, assets, or external services are involved.
+        webView.loadHTMLString("""
+        <html><body><main id="content"></main><script>
+        // An offscreen WKWebView may suspend animation frames. Drive that
+        // scheduling boundary explicitly while retaining the real DOM.
+        var frames = [];
+        window.requestAnimationFrame = function (callback) { frames.push(callback); };
+        function flushFrames() {
+          var pending = frames; frames = []; pending.forEach(function (callback) { callback(); });
+        }
+        var highlightCalls = 0, mathCalls = 0, mermaidCalls = 0;
+        window.hljs = { highlightElement: function (node) {
+          highlightCalls++; node.innerHTML = '<span>highlighted</span>';
+        } };
+        window.renderMathInElement = function (node) {
+          if (node.textContent.indexOf('$') >= 0) { mathCalls++; node.innerHTML = '<span>math</span>'; }
+        };
+        window.mermaid = { run: function (options) {
+          mermaidCalls += options.nodes.length;
+          options.nodes.forEach(function (node) { node.innerHTML = '<svg></svg>'; });
+          return Promise.resolve();
+        } };
+        \(shell[start.upperBound..<end.lowerBound])
+        </script></body></html>
+        """, baseURL: nil)
+        await fulfillment(of: [finished], timeout: 15)
+        return webView
+    }
+
+    func testUnchangedRichBlocksSurviveEditsAndSourceLineShifts() async throws {
+        let webView = try await makePreview()
+        let result = try await webView.callAsyncJavaScript("""
+        var rich = '<pre data-line="2"><code>code</code></pre>' +
+          '<p data-line="5">$x$</p>' +
+          '<pre data-line="7"><code class="language-mermaid">graph TD; A-->B</code></pre>' +
+          '<p data-line="10"><img alt="local image"></p>';
+        setContent('<p data-line="0">first</p>' + rich, 'note');
+        flushFrames();
+        var originals = Array.from(document.getElementById('content').children).slice(1);
+        var shifted = rich.replace(/data-line="(\\d+)"/g, function (_, n) {
+          return 'data-line="' + (Number(n) + 3) + '"';
+        });
+        setContent('<p data-line="0">changed</p>' + shifted, 'note');
+        flushFrames();
+        var current = Array.from(document.getElementById('content').children).slice(1);
+        return [originals.every(function (node, i) { return node === current[i]; }),
+          highlightCalls, mathCalls, mermaidCalls, current[2].getAttribute('data-line'), lineElements.length];
+        """, arguments: [:], in: nil, contentWorld: .page)
+        let values = try XCTUnwrap(result as? [Any])
+        XCTAssertEqual(values[0] as? Bool, true)
+        XCTAssertEqual(values[1] as? Int, 1)
+        XCTAssertEqual(values[2] as? Int, 1)
+        XCTAssertEqual(values[3] as? Int, 1)
+        XCTAssertEqual(values[4] as? String, "10")
+        XCTAssertEqual(values[5] as? Int, 5)
+    }
+
+    func testRapidUpdatesDuplicatesDocumentSwitchAndEmptyContent() async throws {
+        let webView = try await makePreview()
+        let result = try await webView.callAsyncJavaScript("""
+        var code = '<pre><code>same</code></pre>';
+        setContent(code + code, 'first');
+        setContent('<p>latest</p>' + code + code, 'first');
+        flushFrames();
+        var main = document.getElementById('content');
+        var original = main.children[1];
+        var distinct = original !== main.children[2];
+        var firstCalls = highlightCalls;
+        setContent('<p>latest</p>' + code + code, 'second');
+        flushFrames();
+        var switched = main.children[1] !== original;
+        setContent('', 'second');
+        flushFrames();
+        return [distinct, firstCalls, switched, highlightCalls, main.children.length, lineElements.length];
+        """, arguments: [:], in: nil, contentWorld: .page)
+        let values = try XCTUnwrap(result as? [Any])
+        XCTAssertEqual(values[0] as? Bool, true)
+        XCTAssertEqual(values[1] as? Int, 2)
+        XCTAssertEqual(values[2] as? Bool, true)
+        XCTAssertEqual(values[3] as? Int, 4)
+        XCTAssertEqual(values[4] as? Int, 0)
+        XCTAssertEqual(values[5] as? Int, 0)
+    }
 }

@@ -137,6 +137,11 @@ struct MarkdownRenderService {
     var suppressScroll = false;
     var lineElements = [];
     var lastPublishedLine = -1;
+    var previewBlocks = [];
+    var blockRecords = new WeakMap();
+    var pendingEnhancements = new Set();
+    var previewDocumentKey;
+    var contentGeneration = 0;
     // Source blocks are emitted in document order. Read only logarithmically
     // many live positions, so images/math/resizing cannot stale a geometry cache.
     function lastMatchingBlock(predicate) {
@@ -148,20 +153,64 @@ struct MarkdownRenderService {
       }
       return match >= 0 ? lineElements[match] : null;
     }
-    function setContent(html) {
+    function setContent(html, documentKey) {
       var main = document.getElementById('content');
       var doc = document.scrollingElement || document.documentElement;
       var previousMax = doc.scrollHeight - doc.clientHeight;
       var ratio = previousMax > 0 ? doc.scrollTop / previousMax : 0;
+      var generation = ++contentGeneration;
       suppressScroll = true;
-      main.innerHTML = html;
+      // Keep the original HTML key separately from the enhanced DOM. Code, math,
+      // diagrams and images can then survive unrelated edits and line shifts.
+      if (previewDocumentKey !== documentKey) {
+        previewDocumentKey = documentKey;
+        previewBlocks = [];
+        pendingEnhancements.clear();
+      }
+      var available = new Map();
+      previewBlocks.forEach(function (record) {
+        if (!available.has(record.key)) available.set(record.key, { records: [], next: 0 });
+        available.get(record.key).records.push(record);
+      });
+      var template = document.createElement('template');
+      template.innerHTML = html;
+      var retained = new Set();
+      previewBlocks = Array.from(template.content.children).map(function (node) {
+        var line = node.getAttribute('data-line');
+        node.removeAttribute('data-line');
+        var key = node.outerHTML;
+        var matches = available.get(key);
+        var record = matches && matches.next < matches.records.length
+          ? matches.records[matches.next++] : { key: key, node: node };
+        if (record.node === node) pendingEnhancements.add(record);
+        if (line === null) record.node.removeAttribute('data-line');
+        else record.node.setAttribute('data-line', line);
+        blockRecords.set(record.node, record);
+        retained.add(record.node);
+        return record;
+      });
+      Array.from(main.childNodes).forEach(function (node) {
+        if (!retained.has(node)) node.remove();
+      });
+      var cursor = main.firstElementChild;
+      previewBlocks.forEach(function (record) {
+        if (record.node === cursor) cursor = cursor.nextElementSibling;
+        else main.insertBefore(record.node, cursor);
+      });
       lineElements = Array.from(main.querySelectorAll('[data-line]'));
       lastPublishedLine = -1;
       requestAnimationFrame(function () {
+        if (generation !== contentGeneration) return;
+        var changed = Array.from(pendingEnhancements);
+        pendingEnhancements.clear();
+        changed.forEach(function (record) {
+          if (record.node.isConnected) initEnhancements(record.node);
+        });
         var newMax = doc.scrollHeight - doc.clientHeight;
         doc.scrollTop = ratio * newMax;
-        setTimeout(function () { suppressScroll = false; }, 60);
-        initEnhancements();
+        setTimeout(function () {
+          if (generation === contentGeneration) suppressScroll = false;
+        }, 60);
       });
     }
     function absoluteTop(el) {
@@ -187,8 +236,7 @@ struct MarkdownRenderService {
       var el = document.getElementById('userTheme');
       if (el) { el.textContent = css; }
     }
-    function initEnhancements() {
-      var content = document.getElementById('content');
+    function initEnhancements(content) {
       if (!content) return;
       try {
         if (window.hljs) {
@@ -224,12 +272,18 @@ struct MarkdownRenderService {
         window.__mermaidQueue = [];
         queue.forEach(function (cb) { cb(); });
       };
+      script.onerror = function () {
+        window.__mermaidLoading = false;
+        window.__mermaidQueue = [];
+      };
       document.head.appendChild(script);
     }
     function renderMermaid(content) {
       var blocks = content.querySelectorAll('code.language-mermaid');
       if (!blocks.length) return;
       ensureMermaid(function () {
+        if (!content.isConnected) return;
+        var holders = [];
         content.querySelectorAll('code.language-mermaid').forEach(function (code) {
           var pre = code.parentElement;
           var holder = document.createElement('div');
@@ -238,10 +292,20 @@ struct MarkdownRenderService {
             holder.setAttribute('data-line', pre.getAttribute('data-line'));
           }
           holder.textContent = code.textContent;
-          if (pre && pre.parentNode) { pre.parentNode.replaceChild(holder, pre); }
+          if (pre && pre.parentNode) {
+            var record = blockRecords.get(pre);
+            pre.parentNode.replaceChild(holder, pre);
+            if (record) {
+              record.node = holder;
+              blockRecords.set(holder, record);
+            }
+            holders.push(holder);
+          }
         });
-        lineElements = Array.from(content.querySelectorAll('[data-line]'));
-        try { window.mermaid.run({ querySelector: '#content .mermaid' }); } catch (e) {}
+        lineElements = Array.from(document.getElementById('content').querySelectorAll('[data-line]'));
+        try {
+          if (holders.length) window.mermaid.run({ nodes: holders }).catch(function () {});
+        } catch (e) {}
       });
     }
     window.addEventListener('scroll', function () {

@@ -80,4 +80,52 @@ final class EditorTypingAttributeTests: XCTestCase {
         XCTAssertEqual(coordinator.characterIndex(forLine: -1), 0)
     }
 
+    func testLocalEditPreservesAttributesOfDistantLines() throws {
+        textView.string = "# Title\nbody\n\n**unchanged**"
+        coordinator.applyHighlighting()
+        let storage = try XCTUnwrap(textView.textStorage)
+        let marker = NSAttributedString.Key("unchanged-test-marker")
+        storage.addAttribute(marker, value: true, range: (textView.string as NSString).range(of: "unchanged"))
+        textView.insertText("new ", replacementRange: NSRange(location: 8, length: 0))
+        let range = (textView.string as NSString).range(of: "unchanged")
+        XCTAssertEqual(storage.attribute(marker, at: range.location, effectiveRange: nil) as? Bool, true)
+        XCTAssertTrue(highlightedFont(at: range.location)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false)
+    }
+
+    func testRemovingFenceRestylesFollowingLines() {
+        textView.string = "```\n**body**\nend"
+        coordinator.applyHighlighting()
+        textView.insertText("", replacementRange: NSRange(location: 0, length: 3))
+        XCTAssertTrue(highlightedFont(at: 3)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false)
+        XCTAssertEqual(textView.textStorage?.attribute(.foregroundColor, at: 3, effectiveRange: nil) as? NSColor,
+                       NSColor.textColor)
+    }
+
+    func testIncrementalAttributesMatchFullHighlightingAfterStructuralEdits() throws {
+        let versions = [
+            "# Title\n**bold**\n_tail_\n",
+            "# Title\n\n**bold**\n_tail_\n",
+            "# Title\n```\n**bold**\n_tail_\n",
+            "# Title\n```\n**bold**\n```\n_tail_\n",
+            "# Title\n~~~\n**bold**\n```\n_tail_\n",
+            "# Title\n_tail_\n", "# Title", "", "😀 **café**\r\n_tail_",
+            "😀 **cafe\u{301}**\r\n_tail_"
+        ]
+        coordinator.applyHighlighting()
+        for next in versions {
+            let before = Array(textView.string.utf16)
+            let after = Array(next.utf16)
+            var prefix = 0
+            while prefix < min(before.count, after.count), before[prefix] == after[prefix] { prefix += 1 }
+            var suffix = 0
+            while suffix < min(before.count, after.count) - prefix,
+                  before[before.count - suffix - 1] == after[after.count - suffix - 1] { suffix += 1 }
+            let replacement = (next as NSString).substring(with: NSRange(location: prefix, length: after.count - prefix - suffix))
+            textView.insertText(replacement, replacementRange: NSRange(location: prefix, length: before.count - prefix - suffix))
+            let incremental = NSAttributedString(attributedString: try XCTUnwrap(textView.textStorage))
+            coordinator.applyHighlighting()
+            XCTAssertEqual(incremental, textView.textStorage, next)
+        }
+    }
+
 }

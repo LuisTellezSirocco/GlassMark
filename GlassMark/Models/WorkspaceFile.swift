@@ -39,3 +39,38 @@ struct WorkspaceFile: Identifiable, Equatable, Hashable, Sendable {
         self.children = children
     }
 }
+
+/// Built once per file-tree change, rather than flattening, sorting and
+/// lowercasing the entire workspace for every search keystroke.
+struct WorkspaceSearchIndex {
+    private struct Entry {
+        let file: WorkspaceFile
+        let text: String
+    }
+    private let entries: [Entry]
+
+    init(files: [WorkspaceFile]) {
+        var editable: [WorkspaceFile] = []
+        func collect(_ nodes: [WorkspaceFile]) {
+            for file in nodes {
+                if file.isEditable { editable.append(file) }
+                if let children = file.children { collect(children) }
+            }
+        }
+        collect(files)
+        editable.sort { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
+        entries = editable.map { Entry(file: $0, text: "\($0.name) \($0.relativePath)".lowercased()) }
+    }
+
+    func results(for query: String) -> [WorkspaceFile] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return entries.prefix(30).map(\.file) }
+        let terms = trimmed.lowercased().split(separator: " ").map(String.init)
+        var matches: [WorkspaceFile] = []
+        for entry in entries where terms.allSatisfy({ entry.text.contains($0) }) {
+            matches.append(entry.file)
+            if matches.count == 40 { break }
+        }
+        return matches
+    }
+}

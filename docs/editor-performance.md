@@ -54,10 +54,90 @@ different `PreferencesStoreTests`; those runs are not claimed as green. The
 captured crash stack starts in `objc_release` / `_NSWindowTransformAnimation`
 destruction. The focused run completed successfully without that suite.
 
+## Follow-up: typing, rich previews, and Quick Open
+
+The next pass removed repeated work from three other paths:
+
+- **Typing:** the editor now caches relative tokens and incoming/outgoing fence
+  state per logical line. It reparses changed lines and propagates fence changes
+  until the cached context matches again. Only the affected text range and its
+  preceding newline are restyled, leaving distant AppKit layout intact. Font,
+  spacing, document replacement and focus-mode changes still support a full
+  attribute refresh. The gutter reuses the line offsets produced by this pass.
+  CRLF offsets now refer to the original text rather than a normalized copy.
+- **Preview updates:** a new rendered body is reconciled against the original
+  HTML of each top-level block. Unchanged DOM nodes, including enhanced code,
+  math, Mermaid and images, stay attached. Only new blocks run the rich
+  renderers. Source-line attributes are updated independently, duplicate blocks
+  keep separate nodes, pending frames are coalesced, and document switches reset
+  reuse so relative assets cannot carry over from another note.
+- **Quick Open:** the file list is flattened, sorted and lowercased once when
+  the tree changes. Each view evaluation computes results once and search stops
+  after 40 matches. Previously, each evaluation could recursively sort the tree
+  twice and search the entire list twice.
+
+### Reproducible measurements
+
+`script/benchmark_performance.swift` compares full tokenization with the
+incremental cache and retains the previous Quick Open algorithm as a baseline.
+It asserts matching results before reporting timings. Run from the repository:
+
+```sh
+benchmark_dir="$(mktemp -d /tmp/glassmark-benchmark.XXXXXX)"
+swiftc -O -module-cache-path "$benchmark_dir/modules" \
+  GlassMark/Support/MarkdownSyntaxHighlighter.swift \
+  GlassMark/Models/WorkspaceFile.swift \
+  script/benchmark_performance.swift -o "$benchmark_dir/benchmark"
+"$benchmark_dir/benchmark"
+```
+
+One local optimized run on September 19, 2026:
+
+| Workload | Full/repeated work | Reused work |
+| --- | ---: | ---: |
+| 80 heading edits over 2,000 body lines / 90,000 UTF-16 units | 271.85 ms | 72.49 ms |
+| 20 searches over 10,000 files / 100 directories | 273.77 ms | 134.85 ms |
+
+The first workload reparses 80 lines in total with the cache. Its timings do not
+include AppKit attribute application or layout. The second excludes initial
+index construction and times one result computation per query, even though the
+old view could compute it twice. These are isolated CPU measurements, not FPS or
+end-to-end app speedups, and vary between runs.
+
+### Follow-up validation
+
+Regression tests cover incremental/full attribute equivalence after structural
+edits, fence changes, Unicode normalization, CRLF, inherited typing attributes,
+unaffected distant attributes, search ordering and limits. WebKit tests use its
+real DOM with instrumented rich renderers and explicitly driven animation
+frames: unchanged code, math and Mermaid each render once across edits, their
+nodes survive source-line shifts, and rapid updates, duplicates, empty notes
+and document switches are handled.
+
+Debug and Release builds compile successfully. A focused run covering all eight
+affected suites passed **65 tests with zero failures**, including the real-DOM
+WebKit tests. The full-suite attempt and a
+second run excluding preferences both reproduced the existing native crash in
+`objc_release` / `_NSWindowTransformAnimation dealloc`. The new crash stacks match
+the report captured before this follow-up; excluding preferences alone does not
+isolate it, as a later run reached the preview suite before crashing. These runs
+are not claimed as passing.
+
 ## Remaining profiling targets
 
-Initial file reads, full syntax highlighting, and AppKit text layout still have
-costs proportional to document size. The changes above remove repeated work
-from scrolling, but do not virtualize the editor or move file I/O off the main
-thread. Profile a Release build with representative notes to measure complete
-switch latency and frame times before undertaking those larger changes.
+Initial file reads, saves and session restoration still perform file I/O on the
+main thread. Outline/statistics analysis still runs synchronously after a text
+revision. The highlight cache still splits/compares the document's lines, and
+initial highlighting, focus-mode attribute refreshes, large structural edits and
+AppKit layout can still do document-sized work. Notes beyond the existing
+200,000-unit highlighting limit retain their plain-style fallback.
+
+The preview still renders all Markdown in the background and parses the returned
+HTML into a detached template; reuse reduces live DOM replacement and rich
+rendering, not Markdown parsing itself. Quick Open still builds its initial index
+on the main thread and scans it for queries with few matches.
+
+Profile a Release build with representative notes to measure complete switch
+latency, typing latency and frame times before undertaking those larger changes.
+The existing `script/build_and_run.sh` builds Debug by default, so it should not
+be used as a proxy for optimized Release performance.

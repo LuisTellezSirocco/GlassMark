@@ -194,7 +194,8 @@ private struct WebPreview: NSViewRepresentable {
                   let json = String(data: data, encoding: .utf8) else { return }
             // json is a one-element array; drop the brackets to get the quoted string literal.
             let literal = String(json.dropFirst().dropLast())
-            webView.evaluateJavaScript("setContent(\(literal));", completionHandler: nil)
+            let documentKey = latestSessionID?.uuidString ?? ""
+            webView.evaluateJavaScript("setContent(\(literal), '\(documentKey)');", completionHandler: nil)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
