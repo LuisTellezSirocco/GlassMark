@@ -181,4 +181,34 @@ final class MarkdownHTMLRendererTests: XCTestCase {
         let tagged = renderer.renderBody("# Heading", withSourceLines: true, lineOffset: 5)
         XCTAssertTrue(tagged.contains("data-line=\"5\""))
     }
+
+    func testIndentedCodeBlock() {
+        let markdown = "Intro\n\n    let x = 1 < 2\n    let y = 2\n\nOutro"
+        let html = renderer.renderBody(markdown)
+        XCTAssertTrue(html.contains("<pre><code>let x = 1 &lt; 2\nlet y = 2</code></pre>"))
+        XCTAssertTrue(html.contains("<p>Outro</p>"))
+    }
+
+    func testIndentedCodeBlockKeepsInnerBlankLines() {
+        let markdown = "Intro\n\n    uno\n\n    dos"
+        let html = renderer.renderBody(markdown)
+        XCTAssertTrue(html.contains("<pre><code>uno\n\ndos</code></pre>"))
+    }
+
+    func testTabIndentedCodeBlockIsRecognized() {
+        let html = renderer.renderBody("Intro\n\n\tlet x = 1")
+        XCTAssertTrue(html.contains("<pre><code>let x = 1</code></pre>"))
+    }
+
+    func testIndentedLineContinuesParagraphInsteadOfBecomingCode() {
+        let html = renderer.renderBody("Intro\n    continuation")
+        XCTAssertFalse(html.contains("<pre>"))
+        XCTAssertTrue(html.contains("<p>Intro<br>\ncontinuation</p>"))
+    }
+
+    func testIndentedSubListAfterBlankLineStaysAList() {
+        let html = renderer.renderBody("- parent\n\n    - child")
+        XCTAssertTrue(html.contains("<li>child</li>"))
+        XCTAssertFalse(html.contains("<pre>"))
+    }
 }

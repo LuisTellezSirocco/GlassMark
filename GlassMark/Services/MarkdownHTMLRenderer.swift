@@ -152,6 +152,19 @@ struct MarkdownHTMLRenderer {
                 continue
             }
 
+            // Indented code block: four columns of leading indentation starting a
+            // block context. Indented code cannot interrupt a paragraph, so it is
+            // only recognized right after a blank line (or the document start);
+            // `consumeParagraph` already keeps indented continuation lines inside
+            // their paragraph.
+            if leadingSpaces(line) >= 4,
+               index == 0 || lines[index - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+                let (block, next) = consumeIndentedCode(lines, start: index)
+                emit(block, at: startLine)
+                index = next
+                continue
+            }
+
             let (block, next) = consumeParagraph(lines, start: index)
             emit(block, at: startLine)
             index = next
@@ -218,6 +231,52 @@ struct MarkdownHTMLRenderer {
             ? ""
             : " class=\"language-\(escapeAttribute(fence.language.lowercased()))\""
         return ("<pre><code\(languageClass)>\(escaped)</code></pre>", index)
+    }
+
+    // MARK: - Indented code
+
+    /// Consumes an indented code block: consecutive lines indented by at least
+    /// four columns. Blank lines stay inside the block, but trailing ones are
+    /// trimmed because they belong to whatever comes next.
+    private func consumeIndentedCode(_ lines: [String], start: Int) -> (String, Int) {
+        var body: [String] = []
+        var index = start
+
+        while index < lines.count {
+            let line = lines[index]
+            if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                body.append("")
+                index += 1
+                continue
+            }
+            guard leadingSpaces(line) >= 4 else { break }
+            body.append(dedentIndentLevel(line))
+            index += 1
+        }
+
+        while let last = body.last, last.isEmpty { body.removeLast() }
+
+        let escaped = body.map(escapeHTML).joined(separator: "\n")
+        return ("<pre><code>\(escaped)</code></pre>", index)
+    }
+
+    /// Removes one level (four columns) of leading indentation, matching how
+    /// `leadingSpaces` measures it (a tab counts as four).
+    private func dedentIndentLevel(_ line: String) -> String {
+        var columns = 0
+        var index = line.startIndex
+        while index < line.endIndex, columns < 4 {
+            let character = line[index]
+            if character == " " {
+                columns += 1
+            } else if character == "\t" {
+                columns += 4
+            } else {
+                break
+            }
+            index = line.index(after: index)
+        }
+        return String(line[index...])
     }
 
     // MARK: - Headings

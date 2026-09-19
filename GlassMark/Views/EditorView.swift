@@ -576,10 +576,14 @@ struct MarkdownTextView: NSViewRepresentable {
                 return continueListIfNeeded(in: textView)
             }
             if selector == #selector(NSResponder.insertTab(_:)) {
-                return moveToTableCell(in: textView, forward: true)
+                if changeIndentOfSelection(in: textView, outdent: false) { return true }
+                if moveToTableCell(in: textView, forward: true) { return true }
+                return insertIndent(in: textView)
             }
             if selector == #selector(NSResponder.insertBacktab(_:)) {
-                return moveToTableCell(in: textView, forward: false)
+                if changeIndentOfSelection(in: textView, outdent: true) { return true }
+                if moveToTableCell(in: textView, forward: false) { return true }
+                return outdentCurrentLine(in: textView)
             }
             return false
         }
@@ -657,6 +661,172 @@ struct MarkdownTextView: NSViewRepresentable {
                 textView.setSelectedRange(NSRange(location: lineRange.location + pipeOffset, length: 0))
                 return true
             }
+        }
+
+        // MARK: - Indentation
+
+        /// One indent level: four spaces are exactly what Markdown reads as an
+        /// indented (code) block, and they nest list items consistently. Literal
+        /// tabs are avoided because renderers disagree on how to expand them.
+        private static let indentUnit = "    "
+        private static let tabWidth = 4
+
+        private struct IndentEdit {
+            let start: Int
+            let removed: Int
+            let inserted: Int
+        }
+
+        /// Indents (four spaces) or outdents (up to one level) every line the
+        /// selection touches, keeping the selection over the same text so
+        /// repeated presses keep editing the same block. Returns false when there
+        /// is no selection, so the caller can fall back to single-line behavior.
+        private func changeIndentOfSelection(in textView: NSTextView, outdent: Bool) -> Bool {
+            let nsString = textView.string as NSString
+            let selection = textView.selectedRange()
+            guard selection.length > 0, nsString.length > 0 else { return false }
+
+            let contentEnd = min(selection.location + selection.length, nsString.length)
+            let lastCharacter = max(0, contentEnd - 1)
+            let firstLine = nsString.lineRange(
+                for: NSRange(location: min(selection.location, nsString.length - 1), length: 0)
+            )
+            let lastLine = nsString.lineRange(
+                for: NSRange(location: min(lastCharacter, nsString.length - 1), length: 0)
+            )
+
+            var lineRanges: [NSRange] = []
+            var cursor = firstLine.location
+            while cursor <= lastLine.location, cursor < nsString.length {
+                let range = nsString.lineRange(for: NSRange(location: cursor, length: 0))
+                lineRanges.append(range)
+                let next = range.location + range.length
+                if next <= cursor { break }
+                cursor = next
+            }
+            guard !lineRanges.isEmpty else { return false }
+
+            var lines: [String] = []
+            var edits: [IndentEdit] = []
+            for range in lineRanges {
+                let content = nsString.substring(with: range)
+                var body = content
+                var newline = ""
+                if body.hasSuffix("\n") {
+                    body.removeLast()
+                    newline = "\n"
+                }
+
+                var newBody = body
+                var removed = 0
+                var inserted = 0
+                if outdent {
+                    removed = Self.indentCharactersToRemove(from: body)
+                    if removed > 0 { newBody = String(body.dropFirst(removed)) }
+                } else if !body.isEmpty {
+                    inserted = Self.indentUnit.utf16.count
+                    newBody = Self.indentUnit + body
+                }
+
+                if removed > 0 || inserted > 0 {
+                    edits.append(IndentEdit(start: range.location, removed: removed, inserted: inserted))
+                }
+                lines.append(newBody + newline)
+            }
+            guard !edits.isEmpty else { return true }
+
+            let blockRange = NSRange(
+                location: firstLine.location,
+                length: lastLine.location + lastLine.length - firstLine.location
+            )
+            textView.insertText(lines.joined(), replacementRange: blockRange)
+
+            let newLocation = Self.mappedOffset(selection.location, through: edits)
+            let newEnd = Self.mappedOffset(contentEnd, through: edits)
+            let length = (textView.string as NSString).length
+            let clampedLocation = min(max(0, newLocation), length)
+            let clampedEnd = min(max(clampedLocation, newEnd), length)
+            textView.setSelectedRange(NSRange(location: clampedLocation, length: clampedEnd - clampedLocation))
+            return true
+        }
+
+        /// Bare Tab inserts soft spaces up to the next four-column stop, so a Tab
+        /// at the start of a line produces an exact Markdown indent instead of a
+        /// literal tab character.
+        private func insertIndent(in textView: NSTextView) -> Bool {
+            let nsString = textView.string as NSString
+            let selection = textView.selectedRange()
+            let lineStart: Int
+            if nsString.length == 0 {
+                lineStart = 0
+            } else {
+                lineStart = nsString.lineRange(
+                    for: NSRange(location: min(selection.location, nsString.length - 1), length: 0)
+                ).location
+            }
+            let spaces = Self.tabWidth - ((selection.location - lineStart) % Self.tabWidth)
+            textView.insertText(String(repeating: " ", count: spaces), replacementRange: selection)
+            return true
+        }
+
+        /// Shift-Tab with no selection removes one indent level from the current
+        /// line and leaves the caret over the same text.
+        private func outdentCurrentLine(in textView: NSTextView) -> Bool {
+            let nsString = textView.string as NSString
+            guard nsString.length > 0 else { return true }
+            let selection = textView.selectedRange()
+            let lineRange = nsString.lineRange(
+                for: NSRange(location: min(selection.location, nsString.length - 1), length: 0)
+            )
+            let content = nsString.substring(with: lineRange)
+            let body = content.hasSuffix("\n") ? String(content.dropLast()) : content
+            let removed = Self.indentCharactersToRemove(from: body)
+            guard removed > 0 else { return true }
+
+            textView.insertText("", replacementRange: NSRange(location: lineRange.location, length: removed))
+            if selection.location > lineRange.location {
+                let newLocation = max(lineRange.location, selection.location - removed)
+                textView.setSelectedRange(NSRange(location: newLocation, length: 0))
+            }
+            return true
+        }
+
+        /// Number of leading characters to drop for one outdent step: up to four
+        /// columns, with a tab counting as four. Returns 0 when the line does not
+        /// start with indentation.
+        private static func indentCharactersToRemove(from line: String) -> Int {
+            var columns = 0
+            var characters = 0
+            for character in line {
+                if columns >= Self.tabWidth { break }
+                if character == " " {
+                    columns += 1
+                } else if character == "\t" {
+                    columns += Self.tabWidth - (columns % Self.tabWidth)
+                } else {
+                    break
+                }
+                characters += 1
+            }
+            return columns > 0 ? characters : 0
+        }
+
+        /// Maps an original UTF-16 offset through the per-line edits, so the
+        /// selection can be restored over the same text after re-indenting.
+        private static func mappedOffset(_ offset: Int, through edits: [IndentEdit]) -> Int {
+            var delta = 0
+            for edit in edits {
+                if edit.removed == 0 {
+                    if offset >= edit.start { delta += edit.inserted }
+                } else if offset > edit.start {
+                    if offset >= edit.start + edit.removed {
+                        delta -= edit.removed
+                    } else {
+                        delta += edit.start - offset
+                    }
+                }
+            }
+            return offset + delta
         }
 
         // MARK: - List continuation
